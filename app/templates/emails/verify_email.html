@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Xác thực email - StudyNest</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background-color: #1976d2;
+    "
+  >
+    <table
+      width="100%"
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      style="background-color: #1976d2; margin: 0; padding: 20px 0"
+    >
+      <tr>
+        <td align="center">
+          <!-- Main Container -->
+          <table
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            style="
+              background-color: #ffffff;
+              margin: 0 auto;
+              border-radius: 8px;
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            "
+          >
+            <!-- Header -->
+            <tr>
+              <td
+                align="center"
+                style="
+                  background-color: #1976d2;
+                  padding: 60px 40px;
+                  border-radius: 8px 8px 0 0;
+                "
+              >
+                <!-- Logo -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    margin: 0 auto 30px;
+                    background-color: #ffffff;
+                    border-radius: 12px;
+                    padding: 32px;
+                  "
+                >
+                  <tr>
+                    <td align="center">
+                      <table cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td
+                            align="center"
+                            style="
+                              width: 64px;
+                              height: 64px;
+                              background-color: #4caf50;
+                              border-radius: 50%;
+                              text-align: center;
+                              vertical-align: middle;
+                            "
+                          >
+                            <span
+                              style="
+                                font-size: 32px;
+                                color: white;
+                                line-height: 64px;
+                              "
+                              >📚</span
+                            >
+                          </td>
+                        </tr>
+                      </table>
+                      <div
+                        style="
+                          color: #1976d2;
+                          font-size: 32px;
+                          font-weight: bold;
+                          margin: 16px 0 8px;
+                        "
+                      >
+                        STUDY<span style="color: #4caf50">NEST</span>
+                      </div>
+                      <div
+                        style="
+                          color: #757575;
+                          font-size: 14px;
+                          text-transform: uppercase;
+                          letter-spacing: 1.5px;
+                        "
+                      >
+                        Spreading Knowledge
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Welcome Message -->
+                <div style="color: white; font-size: 28px; margin-bottom: 12px">
+                  Chào mừng bạn đến với
+                </div>
+                <div style="color: #81c784; font-size: 32px; font-weight: bold">
+                  StudyNest Community
+                </div>
+              </td>
+            </tr>
+
+            <!-- Content -->
+            <tr>
+              <td align="center" style="padding: 50px 40px">
+                <!-- Welcome Text -->
+                <h1
+                  style="
+                    color: #212121;
+                    font-size: 24px;
+                    margin: 0 0 8px;
+                    font-weight: normal;
+                  "
+                >
+                  Xin chào,
+                  <span style="font-weight: bold; color: #1976d2"
+                    >{{fullname}}</span
+                  >
+                </h1>
+
+                <p
+                  style="
+                    color: #757575;
+                    font-size: 16px;
+                    margin: 0 0 40px;
+                    line-height: 1.5;
+                  "
+                >
+                  Cảm ơn bạn đã tham gia StudyNest. Để xác thực tài khoản, vui
+                  lòng sử dụng mã OTP bên dưới.
+                </p>
+
+                <!-- OTP Label -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="margin: 0 auto 24px"
+                >
+                  <tr>
+                    <td
+                      align="center"
+                      style="
+                        color: #1976d2;
+                        font-size: 14px;
+                        font-weight: bold;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                      "
+                    >
+                      Mã xác thực OTP
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- OTP Digits -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="margin: 0 auto 32px"
+                >
+                  <tr>
+                    <td
+                      style="
+                        width: 56px;
+                        height: 56px;
+                        background-color: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        text-align: center;
+                        vertical-align: middle;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #1976d2;
+                      "
+                    >
+                      {{code[0]}}
+                    </td>
+                    <td style="width: 8px"></td>
+                    <td
+                      style="
+                        width: 56px;
+                        height: 56px;
+                        background-color: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        text-align: center;
+                        vertical-align: middle;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #1976d2;
+                      "
+                    >
+                      {{code[1]}}
+                    </td>
+                    <td style="width: 8px"></td>
+                    <td
+                      style="
+                        width: 56px;
+                        height: 56px;
+                        background-color: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        text-align: center;
+                        vertical-align: middle;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #1976d2;
+                      "
+                    >
+                      {{code[2]}}
+                    </td>
+                    <td style="width: 8px"></td>
+                    <td
+                      style="
+                        width: 56px;
+                        height: 56px;
+                        background-color: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        text-align: center;
+                        vertical-align: middle;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #1976d2;
+                      "
+                    >
+                      {{code[3]}}
+                    </td>
+                    <td style="width: 8px"></td>
+                    <td
+                      style="
+                        width: 56px;
+                        height: 56px;
+                        background-color: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        text-align: center;
+                        vertical-align: middle;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #1976d2;
+                      "
+                    >
+                      {{code[4]}}
+                    </td>
+                    <td style="width: 8px"></td>
+                    <td
+                      style="
+                        width: 56px;
+                        height: 56px;
+                        background-color: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        text-align: center;
+                        vertical-align: middle;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #1976d2;
+                      "
+                    >
+                      {{code[5]}}
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Large OTP Display -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="margin: 0 auto 32px"
+                >
+                  <tr>
+                    <td
+                      align="center"
+                      style="
+                        font-size: 32px;
+                        font-weight: bold;
+                        color: #4caf50;
+                        letter-spacing: 8px;
+                        font-family: monospace;
+                        background-color: #f8f9fa;
+                        padding: 16px 24px;
+                        border-radius: 8px;
+                        border: 1px solid #e9ecef;
+                      "
+                    >
+                      {{code}}
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Material Warning Card -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    margin: 24px auto;
+                    max-width: 400px;
+                    background-color: #fff3e0;
+                    border-radius: 8px;
+                    border-left: 4px solid #ff9800;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+                  "
+                >
+                  <tr>
+                    <td
+                      style="
+                        padding: 16px 20px;
+                        text-align: center;
+                        color: #e65100;
+                        font-size: 14px;
+                        font-weight: 400;
+                      "
+                    >
+                      <span style="font-size: 16px; margin-right: 8px">⏰</span>
+                      Mã có hiệu lực trong <strong>10 phút</strong>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Material Instructions Card -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    margin: 32px auto;
+                    max-width: 480px;
+                    background-color: #ffffff;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+                    border: 1px solid #e0e0e0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 24px 32px">
+                      <h3
+                        style="
+                          color: #1976d2;
+                          font-size: 18px;
+                          margin: 0 0 16px 0;
+                          font-weight: 500;
+                        "
+                      >
+                        Hướng dẫn xác thực
+                      </h3>
+                      <table cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td
+                            style="
+                              width: 24px;
+                              color: #4caf50;
+                              font-weight: 500;
+                              font-size: 16px;
+                              vertical-align: top;
+                              padding-right: 12px;
+                            "
+                          >
+                            1.
+                          </td>
+                          <td
+                            style="
+                              color: #424242;
+                              font-size: 14px;
+                              line-height: 1.5;
+                              padding-bottom: 8px;
+                            "
+                          >
+                            Nhập mã OTP 6 số vào trang xác thực
+                          </td>
+                        </tr>
+                        <tr>
+                          <td
+                            style="
+                              width: 24px;
+                              color: #4caf50;
+                              font-weight: 500;
+                              font-size: 16px;
+                              vertical-align: top;
+                              padding-right: 12px;
+                            "
+                          >
+                            2.
+                          </td>
+                          <td
+                            style="
+                              color: #424242;
+                              font-size: 14px;
+                              line-height: 1.5;
+                              padding-bottom: 8px;
+                            "
+                          >
+                            Mã chỉ sử dụng được một lần duy nhất
+                          </td>
+                        </tr>
+                        <tr>
+                          <td
+                            style="
+                              width: 24px;
+                              color: #4caf50;
+                              font-weight: 500;
+                              font-size: 16px;
+                              vertical-align: top;
+                              padding-right: 12px;
+                            "
+                          >
+                            3.
+                          </td>
+                          <td
+                            style="
+                              color: #424242;
+                              font-size: 14px;
+                              line-height: 1.5;
+                            "
+                          >
+                            Không chia sẻ mã này với ai khác
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Material Footer -->
+            <tr>
+              <td
+                align="center"
+                style="
+                  padding: 48px 40px;
+                  text-align: center;
+                  background-color: #ffffff;
+                  border-top: 1px solid #e0e0e0;
+                "
+              >
+                <!-- Material Footer Card -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    margin: 0 auto 32px;
+                    max-width: 480px;
+                    background-color: #fafafa;
+                    border-radius: 8px;
+                    border: 1px solid #e0e0e0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 24px 32px; text-align: center">
+                      <p
+                        style="
+                          color: #757575;
+                          font-size: 14px;
+                          line-height: 1.5;
+                          margin: 0 0 16px 0;
+                          font-weight: 400;
+                        "
+                      >
+                        Nếu bạn không yêu cầu xác thực này, vui lòng bỏ qua
+                        email này.
+                      </p>
+                      <p
+                        style="
+                          color: #757575;
+                          font-size: 14px;
+                          line-height: 1.5;
+                          margin: 0;
+                          font-weight: 400;
+                        "
+                      >
+                        Hỗ trợ:
+                        <a
+                          href="mailto:support@studynest.com"
+                          style="color: #1976d2; text-decoration: none"
+                          >support@studynest.com</a
+                        >
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Material FAB Social Links -->
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="margin: 0 auto 32px"
+                >
+                  <tr>
+                    <td style="padding: 0 8px">
+                      <a
+                        href="#"
+                        style="
+                          display: inline-block;
+                          width: 48px;
+                          height: 48px;
+                          background-color: #1976d2;
+                          border-radius: 50%;
+                          text-decoration: none;
+                          color: white;
+                          font-size: 18px;
+                          line-height: 48px;
+                          text-align: center;
+                          box-shadow: 0 4px 8px rgba(25, 118, 210, 0.3);
+                        "
+                        >📧</a
+                      >
+                    </td>
+                    <td style="padding: 0 8px">
+                      <a
+                        href="#"
+                        style="
+                          display: inline-block;
+                          width: 48px;
+                          height: 48px;
+                          background-color: #4caf50;
+                          border-radius: 50%;
+                          text-decoration: none;
+                          color: white;
+                          font-size: 18px;
+                          line-height: 48px;
+                          text-align: center;
+                          box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
+                        "
+                        >🌐</a
+                      >
+                    </td>
+                    <td style="padding: 0 8px">
+                      <a
+                        href="#"
+                        style="
+                          display: inline-block;
+                          width: 48px;
+                          height: 48px;
+                          background-color: #ff9800;
+                          border-radius: 50%;
+                          text-decoration: none;
+                          color: white;
+                          font-size: 18px;
+                          line-height: 48px;
+                          text-align: center;
+                          box-shadow: 0 4px 8px rgba(255, 152, 0, 0.3);
+                        "
+                        >📱</a
+                      >
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Material Copyright -->
+                <div
+                  style="
+                    color: #9e9e9e;
+                    font-size: 12px;
+                    font-weight: 400;
+                    line-height: 1.4;
+                  "
+                >
+                  © 2025 StudyNest Platform<br />
+                  <span style="color: #1976d2; font-weight: 500"
+                    >Spreading Knowledge</span
+                  >
+                  - Nền tảng học tập hiện đại
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -1,0 +1,51 @@
+# === Core FastAPI stack ===
+fastapi
+uvicorn[standard]              # uvloop, httptools, websockets
+anyio>=4.0.0
+starlette>=0.37.0
+python-multipart>=0.0.6        # upload file/form
+
+# === Database & ORM ===
+SQLAlchemy[asyncio]>=2.0.36
+greenlet>=3.1.0                # bắt buộc cho async ORM
+asyncpg                        # PostgreSQL async driver
+pgvector                       # vector embedding
+alembic                        # migration
+
+# === Auth & Security ===
+bcrypt
+passlib[bcrypt]
+pyjwt[crypto]                  # hỗ trợ HS + RS + EC keys
+python-slugify                 # sinh slug
+pydantic-settings              # 12-factor config (.env)
+
+# === Google & AI APIs ===
+google-generativeai
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+tiktoken   
+isodate                    # tokenizer OpenAI/Gemini
+
+# === Data & Utils ===
+faker
+pandas
+openpyxl
+python-dotenv
+sqlakeyset[asyncio]
+fastapi-pagination[sqlalchemy]
+
+# === Developer tools ===
+black
+ruff
+sqlalchemy2-stubs              # autocomplete ORM
+sqlacodegen                    # generate model từ DB
+
+# === Optional: psycopg (chỉ chọn 1) ===
+# ⚠️ Nếu bạn đã dùng asyncpg thì KHÔNG cần psycopg
+# psycopg[binary]             # chỉ khi cần sync DB utils (ví dụ seed script)
+
+
+
+python-slugify

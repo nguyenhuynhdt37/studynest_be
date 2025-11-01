@@ -1,0 +1,46 @@
+{
+  // "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnType": true
+  },
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit",
+    "source.fixAll": "explicit"
+  },
+
+  // Pylance / IntelliSense improvements
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.diagnosticMode": "workspace",
+  "python.analysis.indexing": true,
+  "python.analysis.inlayHints.variableTypes": true,
+  "python.analysis.inlayHints.functionReturnTypes": true,
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "python.analysis.importFormat": "absolute",
+
+  // Testing
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["app"],
+
+  // Env + imports (so you can `import app.*` cleanly)
+  "python.envFile": "${workspaceFolder}/.env",
+  "terminal.integrated.env.osx": {
+    "PYTHONPATH": "${workspaceFolder}"
+  },
+  "python.terminal.activateEnvironment": true,
+
+  // Ruff (lint + quick fixes + import sort)
+  "ruff.lint.enable": true,
+  "ruff.fixOnSave": true,
+
+  // Keep UI clean
+  "files.exclude": {
+    "**/__pycache__": true
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    ".venv": true
+  }
+}

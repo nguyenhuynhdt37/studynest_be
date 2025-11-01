@@ -1,0 +1,10 @@
+app/core/secret/token.json
+venv/
+.venv/
+token.json
+token.json
+
+token.json
+credentials.json
+*.pem
+.env
