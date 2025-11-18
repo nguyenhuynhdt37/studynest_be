@@ -1,145 +1,320 @@
-import os
+from __future__ import annotations
 
+import asyncio
+import json
+import os
+import re
+import time
+from typing import Any
+
+import aiofiles
+import httpx
 import isodate
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from loguru import logger
+from starlette.datastructures import UploadFile
+
+# ======================================================
+# ⚙️ CONFIG
+# ======================================================
+SCOPES: list[str] = [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/youtube.upload",
+]
+
+TOKEN_PATH = "app/core/secret/token.json"
+CLIENT_SECRET_PATH = "app/core/secret/client_secret.json"
+
+UPLOAD_PROGRESS: dict[str, int] = {}
+UPLOAD_RESULT: dict[str, dict[str, str]] = {}
+UPLOAD_LOCK = asyncio.Lock()
+UPLOAD_STATS: dict[str, dict[str, float | int]] = {}
 
 
-class YouTubeUploader:
-    """
-    Upload video lên YouTube (OAuth2)
-    - Tự xác thực, lưu token.json để tái sử dụng
-    - Upload video với privacyStatus = 'unlisted'
-    - Sau khi upload, truy vấn metadata để lấy duration (tính bằng giây)
-    """
+# ======================================================
+# 📦 SERVICE
+# ======================================================
+class YouTubeAsyncService:
+    def __init__(self) -> None:
+        self._access_token: str | None = None
+        self._creds: Credentials | None = None
+        self._authenticate_console_if_missing()
 
-    SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+    # ======================================================
+    # 🔑 AUTH
+    # ======================================================
+    def _authenticate_console_if_missing(self) -> None:
+        """Nếu chưa có token thì yêu cầu xác thực Google qua console."""
+        if os.path.exists(TOKEN_PATH):
+            return
+        if not os.path.exists(CLIENT_SECRET_PATH):
+            raise FileNotFoundError(f"❌ Thiếu file {CLIENT_SECRET_PATH}")
 
-    def __init__(
-        self,
-        client_secret_path: str = "app/core/secret/client_secret.json",
-        token_path: str = "app/core/secret/token.json",
-    ):
-        self.client_secret_path = client_secret_path
-        self.token_path = token_path
-        self.service = self._authenticate()
+        logger.info("🔑 Chưa có token — tiến hành xác thực Google (console)…")
+        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_PATH, SCOPES)
+        creds = flow.run_console()
+        os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
+        with open(TOKEN_PATH, "w", encoding="utf-8") as f:
+            f.write(creds.to_json())
+        logger.success(f"✅ Token mới đã lưu tại: {TOKEN_PATH}")
 
-    def _authenticate(self):
-        """Tự động xác thực / refresh token nếu có"""
-        creds = None
+    async def _load_token(self) -> dict[str, Any]:
+        if not os.path.exists(TOKEN_PATH):
+            self._authenticate_console_if_missing()
+        async with aiofiles.open(TOKEN_PATH, "r") as f:
+            return json.loads(await f.read())
 
-        # Đọc token cũ nếu có
-        if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_file(self.token_path, self.SCOPES)
+    async def _get_access_token(self) -> str:
+        """Trả về access_token hợp lệ, refresh nếu cần."""
+        if self._access_token:
+            return self._access_token
 
-        # Nếu chưa có hoặc token hết hạn
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                print("🔄 Token đã được refresh.")
+        data = await self._load_token()
+        creds = Credentials.from_authorized_user_info(data, SCOPES)
+
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            async with aiofiles.open(TOKEN_PATH, "w") as f:
+                await f.write(creds.to_json())
+
+        if not creds.valid:
+            raise RuntimeError(
+                "❌ Token không hợp lệ, cần xác thực lại (xóa token.json rồi upload lại)."
+            )
+
+        self._access_token = creds.token
+        self._creds = creds
+        return self._access_token
+
+    async def upload_video_with_progress(
+        self, file: UploadFile, task_id: str, title: str, description: str = ""
+    ) -> dict[str, Any]:
+        access_token = await self._get_access_token()
+        upload_url = (
+            "https://www.googleapis.com/upload/youtube/v3/videos"
+            "?uploadType=resumable&part=snippet,status"
+        )
+
+        # === 1️⃣ Tính kích thước file ===
+        try:
+            if hasattr(file.file, "getbuffer"):
+                total_size = len(file.file.getbuffer())
+            elif hasattr(file.file, "seek") and hasattr(file.file, "tell"):
+                pos = file.file.tell()
+                file.file.seek(0, os.SEEK_END)
+                total_size = file.file.tell()
+                file.file.seek(pos)
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.client_secret_path, self.SCOPES
-                )
-                creds = flow.run_local_server(port=8080, prompt="consent")
+                total_size = getattr(file, "size", 1)
+        except Exception:
+            total_size = getattr(file, "size", 1)
 
-            os.makedirs(os.path.dirname(self.token_path), exist_ok=True)
-            with open(self.token_path, "w") as token:
-                token.write(creds.to_json())
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "X-Upload-Content-Type": file.headers.get("content-type", "video/mp4"),
+            "X-Upload-Content-Length": str(total_size),
+        }
 
-        return build("youtube", "v3", credentials=creds)
-
-    def upload(
-        self,
-        file_path: str,
-        title: str,
-        description: str = "",
-        privacy: str = "unlisted",
-    ) -> dict:
-        """Upload video lên YouTube và trả về {video_id, url, duration_seconds}"""
-        body = {
+        # === 2️⃣ Gửi metadata khi khởi tạo session ===
+        metadata = {
             "snippet": {
-                "title": title,
-                "description": description,
-                "tags": ["elearning", "lesson"],
+                "title": title or "Video bài học",
+                "description": description or "",
                 "categoryId": "27",  # Education
             },
-            "status": {
-                "privacyStatus": privacy,
-                "selfDeclaredMadeForKids": False,
-            },
+            "status": {"privacyStatus": "unlisted"},  # 👈 Chế độ không công khai
         }
 
-        media = MediaFileUpload(file_path, chunksize=-1, resumable=True)
-        print(f"🚀 Đang upload video: {os.path.basename(file_path)}")
+        async with httpx.AsyncClient(timeout=None) as client:
+            init_res = await client.post(upload_url, headers=headers, json=metadata)
+            if init_res.status_code not in (200, 201):
+                raise RuntimeError(f"❌ Lỗi khởi tạo upload: {init_res.text}")
 
-        request = self.service.videos().insert(
-            part="snippet,status",
-            body=body,
-            media_body=media,
+            upload_location = init_res.headers.get("Location")
+            if not upload_location:
+                raise RuntimeError("❌ Không nhận được upload URL từ YouTube.")
+
+        # === 3️⃣ Upload từng chunk ===
+        chunk_size = 4 * 1024 * 1024  # 4 MB
+        uploaded_bytes = 0
+        file.file.seek(0)
+
+        async with UPLOAD_LOCK:
+            start_time = time.time()
+            UPLOAD_PROGRESS[task_id] = 0
+            UPLOAD_STATS[task_id] = {
+                "start_time": start_time,
+                "uploaded_bytes": 0,
+                "total_size": float(total_size),
+                "speed": 0.0,
+            }
+
+        logger.info(
+            f"🚀 Upload {file.filename} ({total_size/1e6:.2f} MB) → task {task_id}"
         )
-        response = request.execute()
 
-        video_id = response.get("id")
-        video_url = self.get_video_url(video_id)
-        print(f"✅ Upload thành công: {video_url}")
+        async with httpx.AsyncClient(timeout=None) as upload_client:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
 
-        # 🔍 Lấy duration
-        duration_seconds = self.get_duration(video_id)
-        print(f"🕒 Thời lượng video: {duration_seconds:.0f} giây")
+                content_range = f"bytes {uploaded_bytes}-{uploaded_bytes + len(chunk) - 1}/{total_size}"
+                upload_headers = {
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Length": str(len(chunk)),
+                    "Content-Type": file.headers.get("content-type", "video/mp4"),
+                    "Content-Range": content_range,
+                }
 
-        return {
-            "video_id": video_id,
-            "video_url": video_url,
-            "duration_seconds": duration_seconds,
+                res = await upload_client.put(
+                    upload_location, headers=upload_headers, content=chunk
+                )
+                if res.status_code not in (200, 201, 308):
+                    raise RuntimeError(f"❌ Upload lỗi: {res.text}")
+
+                uploaded_bytes += len(chunk)
+                percent = min(int(uploaded_bytes / total_size * 100), 100)
+
+                async with UPLOAD_LOCK:
+                    elapsed = max(time.time() - start_time, 0.001)
+                    speed = (uploaded_bytes / 1_048_576) / elapsed
+                    UPLOAD_PROGRESS[task_id] = percent
+                    UPLOAD_STATS[task_id].update(
+                        {"uploaded_bytes": uploaded_bytes, "speed": speed}
+                    )
+
+                logger.info(
+                    f"📦 {file.filename}: {percent}% ({uploaded_bytes}/{total_size})"
+                )
+
+        body = res.json()
+        video_id = body.get("id")
+        if not video_id:
+            raise RuntimeError(f"❌ Upload hoàn tất nhưng không có video_id: {body}")
+
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        async with UPLOAD_LOCK:
+            UPLOAD_PROGRESS[task_id] = 100
+            UPLOAD_RESULT[task_id] = {"video_id": video_id, "video_url": video_url}
+
+        logger.success(f"✅ Upload hoàn tất: {video_url}")
+        return {"video_id": video_id, "video_url": video_url, "task_id": task_id}
+
+    async def get_duration(self, video_id: str, wait_first: bool = True) -> float:
+        """
+        Lấy thời lượng video (giây) qua YouTube Data API v3 (chuẩn async).
+        - Gọi videos().list(part="contentDetails") qua HTTP.
+        - Parse ISO8601 thành số giây (float).
+        - Retry 5 lần cách nhau 3s (đề phòng YouTube chưa xử lý xong).
+        """
+        if wait_first:
+            logger.info("⏳ Đợi 30s cho YouTube xử lý video…")
+            await asyncio.sleep(30)
+
+        access_token = await self._get_access_token()
+        url = (
+            "https://www.googleapis.com/youtube/v3/videos"
+            f"?part=contentDetails&id={video_id}"
+        )
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
         }
 
-    def get_duration(self, video_id: str) -> float:
-        """Lấy thời lượng video (tính bằng giây)"""
-        response = (
-            self.service.videos().list(part="contentDetails", id=video_id).execute()
-        )
-        items = response.get("items", [])
-        if not items:
-            return 0.0
+        for attempt in range(5):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    res = await client.get(url, headers=headers)
+                if res.status_code != 200:
+                    logger.warning(f"⚠️ Lần {attempt+1}/5 lỗi API: {res.text}")
+                else:
+                    data = res.json()
+                    items = data.get("items", [])
+                    if items and "contentDetails" in items[0]:
+                        duration_iso = items[0]["contentDetails"]["duration"]
+                        duration = isodate.parse_duration(duration_iso)
+                        seconds = duration.total_seconds()
+                        logger.success(
+                            f"✅ Lấy được duration: {seconds:.0f}s (lần {attempt+1})"
+                        )
+                        return seconds
+                    else:
+                        logger.warning(
+                            f"⚠️ Lần {attempt+1}/5: chưa có contentDetails, thử lại sau 3s..."
+                        )
+            except Exception as e:
+                logger.warning(f"⚠️ Lần {attempt+1}/5 lỗi không xác định: {e}")
+            await asyncio.sleep(3)
 
-        # Chuỗi thời lượng ISO 8601: ví dụ 'PT1H2M13S'
-        duration_iso = items[0]["contentDetails"]["duration"]
-        duration = isodate.parse_duration(duration_iso)
-        return duration.total_seconds()
+        logger.error("❌ Không lấy được duration sau 5 lần thử.")
+        return 0.0
 
-    def delete(self, video_id: str) -> bool:
-        """Xóa video"""
-        try:
-            self.service.videos().delete(id=video_id).execute()
-            print(f"🗑️ Đã xóa video: {video_id}")
-            return True
-        except Exception as e:
-            print(f"❌ Lỗi khi xóa video: {e}")
-            return False
+    # ======================================================
+    # 🔍 UTILITIES
+    # ======================================================
+    @staticmethod
+    async def extract_youtube_id(url_or_id: str) -> str:
+        """
+        ✅ Nhận URL hoặc ID, trả về ID YouTube hợp lệ.
+        Hỗ trợ mọi dạng:
+        - https://www.youtube.com/watch?v=abc123XYZ89
+        - https://youtu.be/abc123XYZ89
+        - https://youtube.com/shorts/abc123XYZ89
+        - abc123XYZ89 (truyền sẵn ID)
+        """
+        pattern = re.compile(r"(?:v=|\/|be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})")
+        match = pattern.search(url_or_id)
+        if match:
+            return match.group(1)
+        return url_or_id.strip()
 
     @staticmethod
     def get_video_url(video_id: str) -> str:
-        """Trả về URL xem video"""
         return f"https://www.youtube.com/watch?v={video_id}"
 
 
-# === Test nhanh ===
-if __name__ == "__main__":
-    uploader = YouTubeUploader(
-        client_secret_path="app/core/secret/client_secret.json",
-        token_path="app/core/secret/token.json",
-    )
+# ======================================================
+# 🔍 API tiện ích
+# ======================================================
+async def get_upload_progress(task_id: str) -> dict[str, Any]:
+    async with UPLOAD_LOCK:
+        percent = UPLOAD_PROGRESS.get(task_id, 0)
+        stat = UPLOAD_STATS.get(task_id, {})
+        result = UPLOAD_RESULT.get(task_id, {}) if percent >= 100 else {}
+        return {
+            "task_id": task_id,
+            "percent": percent,
+            "speed_mb_s": round(float(stat.get("speed", 0.0)), 2),
+            "uploaded_mb": round(float(stat.get("uploaded_bytes", 0)) / 1_048_576, 2),
+            "total_mb": round(float(stat.get("total_size", 0)) / 1_048_576, 2),
+            "video_id": result.get("video_id"),
+            "video_url": result.get("video_url"),
+            "is_completed": bool(result),
+        }
 
-    video_path = "lesson01.mp4"
-    result = uploader.upload(
-        file_path=video_path,
-        title="Bài học 01 - Python cơ bản",
-        description="Giới thiệu Python, biến, kiểu dữ liệu, và ví dụ đầu tiên.",
-    )
 
-    print("\n📦 Kết quả trả về:")
-    print(result)
+async def get_upload_result(task_id: str) -> dict[str, Any]:
+    async with UPLOAD_LOCK:
+        return UPLOAD_RESULT.get(task_id, {})
+
+
+# ============================================================
+# ⚡ Singleton Provider cho FastAPI (dùng @Depends)
+# ============================================================
+
+
+# Singleton instance for YouTubeAsyncService
+_youtube_service: YouTubeAsyncService | None = None
+
+
+async def get_youtube_service() -> YouTubeAsyncService:
+    global _youtube_service
+    if _youtube_service is None:
+        logger.info("🚀 Khởi tạo YouTubeAsyncService lần đầu.")
+        _youtube_service = YouTubeAsyncService()
+    return _youtube_service

@@ -1,7 +1,6 @@
 # app/services/mailer.py
 from pathlib import Path
 
-from fastapi import Depends
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
 from pydantic import SecretStr
 

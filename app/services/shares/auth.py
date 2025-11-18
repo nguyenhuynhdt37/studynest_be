@@ -13,6 +13,7 @@ from sqlalchemy.sql.expression import desc
 from app.core.security import SecurityService
 from app.db.models.database import EmailVerifications, Role, User, UserRoles
 from app.db.sesson import get_session
+from app.libs.formats.datetime import now as get_now
 from app.schemas.auth.user import LoginUser, RefreshEmail, UserCreate, VerifyEmail
 from app.services.shares.mailer import MailerService
 
@@ -39,13 +40,15 @@ class AuthService:
             user: User | None = result.scalar()
             if not user:
                 raise HTTPException(404, "User not found")
-            if not self.security.verify_password(schema.password, user.password or ""):
+            if not await self.security.verify_password(
+                schema.password, user.password or ""
+            ):
                 raise HTTPException(404, "User not found")
             if not user.is_verified_email:
                 raise HTTPException(401, "Người dùng chưa xác thực email")
 
             if user.is_banned:
-                if user.banned_until and user.banned_until < datetime.utcnow():
+                if user.banned_until and user.banned_until < get_now():
                     user.is_banned = False
                     user.banned_reason = None
                     user.banned_until = None
@@ -58,7 +61,7 @@ class AuthService:
 
             res.set_cookie(
                 key="access_token",
-                value=self.security.create_access_token(str(user.id)),
+                value=await self.security.create_access_token(str(user.id)),
                 httponly=True,
                 secure=not DEBUG,  # 🟢 Dev = False, Prod = True
                 samesite="lax",  # hoặc "none" nếu frontend/backend khác domain
@@ -83,14 +86,14 @@ class AuthService:
             new_user = User()
             new_user.email = schema.email
             new_user.fullname = schema.full_name if schema.full_name else ""
-            password_hash = self.security.hash_password(schema.password)
+            password_hash = await self.security.hash_password(schema.password)
             new_user.is_active = False
             new_user.password = password_hash
-            new_user.create_at = datetime.utcnow()
+            new_user.create_at = get_now()
             self.db.add(new_user)
             await self.db.flush()
-            code = self.security.generate_otp()
-            expired_at = datetime.utcnow() + timedelta(minutes=5)
+            code = await self.security.generate_otp()
+            expired_at = get_now() + timedelta(minutes=5)
             verification = EmailVerifications(
                 user_id=new_user.id, code=code, expired_at=expired_at
             )
@@ -118,7 +121,7 @@ class AuthService:
 
     async def refesh_email_async(self, schema: RefreshEmail):
         try:
-            today_start = datetime.utcnow().replace(
+            today_start = get_now().replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
             tomorrow_start = today_start + timedelta(days=1)
@@ -152,12 +155,12 @@ class AuthService:
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Bạn đã gửi quá 5 lần trong hôm nay",
                 )
-            code = self.security.generate_otp()
+            code = await self.security.generate_otp()
             self.db.add(
                 EmailVerifications(
                     user_id=user.id,
                     code=code,
-                    expired_at=datetime.utcnow() + timedelta(minutes=5),
+                    expired_at=get_now() + timedelta(minutes=5),
                 )
             )
             await self.db.commit()
@@ -200,7 +203,7 @@ class AuthService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Mã xác thực không hợp lệ hoặc đã hết hạn.",
                 )
-            if email_verify.expired_at < datetime.utcnow():
+            if email_verify.expired_at < get_now():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Mã xác thực không hợp lệ hoặc đã hết hạn.",
@@ -216,13 +219,13 @@ class AuthService:
             self.db.add(UserRoles(role_id=role.id, user_id=user.id))
             user.is_verified_email = True
             user.is_active = True
-            user.email_verified_at = datetime.utcnow()
-            user.update_at = datetime.utcnow()
+            user.email_verified_at = get_now()
+            user.update_at = get_now()
             await self.db.commit()
             await self.db.refresh(user)
             res.set_cookie(
                 key="access_token",
-                value=self.security.create_access_token(str(user.id)),
+                value=await self.security.create_access_token(str(user.id)),
                 httponly=True,
                 secure=not DEBUG,  # 🟢 Dev = False, Prod = True
                 samesite="lax",  # hoặc "none" nếu frontend/backend khác domain

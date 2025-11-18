@@ -1,10 +1,10 @@
 import uuid
+from operator import or_
 from typing import Any
 
 from fastapi import Depends, HTTPException
 from sqlalchemy import asc, case, delete, desc, func, outerjoin, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
 from app.db.models.database import Categories, Courses
 from app.db.sesson import get_session
@@ -24,27 +24,38 @@ class CategoryService:
         parent_id: str | None = None,
         sort_by: str = "order_index",  # name | course_count | created_at
         sort_order: str = "asc",  # asc | desc
-        level: int | None = None,  # ✅ cấp 0, 1, 2
+        level: int | None = None,  # 0 | 1 | 2 (độ sâu thật)
     ):
         try:
             offset = (page - 1) * page_size
 
-            # 1️⃣ Map sort
+            # 1) Map cột sort
+            # Lưu ý: vì có aggregate, dùng func min/ count cho an toàn khi group_by
             sort_map = {
                 "name": Categories.name,
                 "order_index": Categories.order_index,
                 "course_count": func.count(Courses.id),
                 "created_at": func.min(Courses.created_at),
             }
-
             sort_column = sort_map.get(sort_by, Categories.order_index)
             sort_func = asc if sort_order.lower() == "asc" else desc
 
-            # 2️⃣ Alias để kiểm tra có con không
-            Child = aliased(Categories)
-            has_child_subq = select(1).where(Child.parent_id == Categories.id).exists()
+            # 2) CTE bậc theo độ sâu
+            level0 = (
+                select(Categories.id)
+                .where(Categories.parent_id.is_(None))
+                .cte("level0")
+            )
+            level1 = (
+                select(Categories.id)
+                .where(Categories.parent_id.in_(select(level0.c.id)))
+                .cte("level1")
+            )
+            # level2 = parent là id của level1 (không ràng child_count)
+            # (nếu bạn muốn hỗ trợ sâu hơn thì build tiếp level3 bằng parent in level2)
+            # Ở đây dùng trực tiếp khi filter
 
-            # 3️⃣ Base query
+            # 3) Base query (join Courses để đếm)
             stmt = (
                 select(
                     Categories.id,
@@ -60,9 +71,7 @@ class CategoryService:
                 .group_by(Categories.id)
             )
 
-            # 4️⃣ Filter theo parent_id hoặc tìm kiếm
-            if parent_id:
-                stmt = stmt.where(Categories.parent_id == parent_id)
+            # 4) Tìm kiếm
             if search:
                 search_term = f"%{search.lower()}%"
                 stmt = stmt.where(
@@ -70,35 +79,35 @@ class CategoryService:
                     | func.lower(Categories.slug).like(search_term)
                 )
 
-            # 5️⃣ ✅ Filter theo cấp
-            if level == 0:
-                # Cấp 0 = cha gốc
-                stmt = stmt.where(Categories.parent_id.is_(None))
-            elif level == 1:
-                # Cấp 1 = có cha nhưng vẫn có con
-                stmt = stmt.where(
-                    Categories.parent_id.is_not(None),
-                    has_child_subq,  # có ít nhất 1 con
-                )
-            elif level == 2:
-                # Cấp 2 = có cha nhưng KHÔNG có con
-                stmt = stmt.where(
-                    Categories.parent_id.is_not(None),
-                    ~has_child_subq,  # không có con
-                )
+            # 5) Filter theo level (độ sâu thật)
+            if level is not None:
+                if level == 0:
+                    stmt = stmt.where(Categories.id.in_(select(level0.c.id)))
+                elif level == 1:
+                    stmt = stmt.where(Categories.id.in_(select(level1.c.id)))
+                elif level == 2:
+                    stmt = stmt.where(Categories.parent_id.in_(select(level1.c.id)))
+                else:
+                    raise HTTPException(
+                        status_code=400, detail="Level không hợp lệ (chỉ 0, 1, 2)."
+                    )
 
-            # 6️⃣ Đếm tổng (cho phân trang)
+            # 6) Filter theo parent_id (nếu truyền)
+            if parent_id:
+                stmt = stmt.where(Categories.parent_id == parent_id)
+
+            # 7) Đếm tổng
             count_stmt = select(func.count()).select_from(stmt.subquery())
             total = await self.db.scalar(count_stmt)
 
-            # 7️⃣ Gắn sắp xếp + phân trang
+            # 8) Sắp xếp + phân trang
             stmt = stmt.order_by(sort_func(sort_column)).offset(offset).limit(page_size)
 
-            # 8️⃣ Thực thi
+            # 9) Thực thi
             result = await self.db.execute(stmt)
             rows = result.all()
 
-            # 9️⃣ Trả kết quả
+            # 10) Trả kết quả
             return {
                 "items": [
                     {
@@ -114,27 +123,31 @@ class CategoryService:
                 "pagination": {
                     "page": page,
                     "page_size": page_size,
-                    "total_items": total or 0,
-                    "total_pages": (total + page_size - 1) // page_size if total else 0,
+                    "total_items": int(total or 0),
+                    "total_pages": int(((total or 0) + page_size - 1) // page_size),
                 },
             }
 
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Lỗi khi lấy danh mục: {e}")
 
     async def get_parent_and_second_level_categories(self):
-        # Alias cho bảng con
-        Child = aliased(Categories)
 
-        # Subquery: kiểm tra danh mục có ít nhất 1 child
-        subq = select(Child.id).where(Child.parent_id == Categories.id)
+        parent_ids_subq = (
+            select(Categories.id).where(Categories.parent_id.is_(None)).subquery()
+        )
 
-        # Query chính
         stmt = (
             select(Categories)
-            .where(subq.exists())  # chỉ lấy category có con
+            .where(
+                or_(
+                    Categories.parent_id.is_(None),  # cấp 0
+                    Categories.parent_id.in_(select(parent_ids_subq.c.id)),  # cấp 1
+                )
+            )
             .order_by(
-                # Ưu tiên parent_id IS NULL (cha) trước
                 case((Categories.parent_id.is_(None), 0), else_=1),
                 asc(Categories.order_index),
             )

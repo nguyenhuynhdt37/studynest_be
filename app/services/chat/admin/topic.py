@@ -1,4 +1,5 @@
 from fastapi import Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm import LLMService
@@ -18,7 +19,7 @@ class TopicService:
     async def create_topic_details_async(self, schema: CreateDetailsTopic):
         try:
             prompt = f"""
-                            Bạn là chuyên gia đào tạo trong lĩnh vực công nghệ thông tin.
+                            Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
 
                             Hãy viết phần **mô tả chi tiết cho một chủ đề học tập** theo hướng chuyên nghiệp và hấp dẫn.
 
@@ -34,8 +35,10 @@ class TopicService:
                             - `**...**` cho phần nhấn mạnh
                             - danh sách `-` nếu cần
                             - **Chỉ trả về nội dung mô tả**, không thêm lời chào, chú thích hay tiêu đề phụ khác.
+                            - Không trả về tiêu đề ví dụ:  "Nền tảng CNTT và Phần mềm cho Lập trình viên Web"
                             """
-            return await self.llm_service.call_model(prompt)
+            result = await self.llm_service.call_model(prompt)
+            return PlainTextResponse(result, media_type="text/markdown")
 
         except Exception as e:
             await self.db.rollback()

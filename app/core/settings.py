@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     DATABASE_ASYNC_URL: str = ""
-    DATABASE_SYNC_URL: str = ""
 
     # google key
     GOOGLE_API_KEY: str = ""
@@ -37,6 +36,19 @@ class Settings(BaseSettings):
     GOOGLE_ROOT_FOLDER_ID: str = ""
     GOOGLE_CREDENTIALS_PATH: str = ""
     GOOGLE_API_KEY_CHAT: str = ""
+
+    HF_TOKEN: str = ""
+
+    PISTON_URL: str = ""
+
+    # PayPal
+    PAYPAL_CLIENT_ID: str = ""
+    PAYPAL_CLIENT_SECRET: str = ""
+    PAYPAL_BASE_URL: str = ""
+    # PAYPAL_WEBHOOK_ID: str = ""
+
+    FRONTEND_URL: str = ""
+    BACKEND_URL: str = ""
 
     class Config:
         env_file = ".env"

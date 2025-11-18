@@ -3,31 +3,55 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import BackgroundTasks, Depends, HTTPException, status
+from loguru import logger
+from sqlalchemy import asc, delete, desc, exists, func, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.embedding import get_embedding_service
+from app.core.ws_manager import ws_manager
 from app.db.models.database import (
     CourseEnrollments,
     Courses,
     CourseSections,
     LessonActive,
+    LessonCodeFiles,
+    LessonCodes,
+    LessonCommentReactions,
+    LessonComments,
+    LessonNotes,
     LessonProgress,
     LessonQuizzes,
     Lessons,
     LessonVideos,
+    SupportedLanguages,
     User,
 )
-from app.db.sesson import get_session
+from app.db.sesson import AsyncSessionLocal, get_session
+from app.libs.formats.datetime import now as get_now
+from app.libs.formats.datetime import to_utc_naive
+from app.schemas.lecturer.lesson import LessonCodeSaveFile, LessonCodeUserTest
+from app.schemas.user.learning import (
+    CreateLessonComment,
+    CreateLessonNote,
+    UpdateLessonComment,
+    UpdateLessonNote,
+)
+from app.services.shares.code_runner import PistonService
 
 
 class LearningService:
     """Service quản lý học tập của người dùng."""
 
-    def __init__(self, db: AsyncSession = Depends(get_session)):
+    def __init__(
+        self,
+        db: AsyncSession = Depends(get_session),
+        piston: PistonService = Depends(PistonService),
+    ):
         self.db = db
+        self.piston = piston
 
     async def get_course_enrolled_async(self, course_slug: str, user: User):
         try:
@@ -98,6 +122,7 @@ class LearningService:
                 raise HTTPException(status_code=404, detail="Giang vien khong ton tai")
             return {
                 "id": instructor.id,
+                "fullname": instructor.fullname,
                 "avatar": instructor.avatar,
                 "conscious": instructor.conscious,
                 "district": instructor.district,
@@ -238,7 +263,7 @@ class LearningService:
                         user_id=user.id,
                         course_id=course.id,
                         lesson_id=first_lesson_id,
-                        activated_at=datetime.utcnow(),
+                        activated_at=get_now(),
                     )
                 )
                 await self.db.flush()
@@ -248,18 +273,18 @@ class LearningService:
             locked_ids: set[uuid.UUID] = set()
             if is_lock_enabled:
                 gating_sequence = [l for l in all_lessons if not l.is_preview]
-                completed_ids = {lid for lid, done in progress_map.items() if done}
+                existing_progress_ids = set(progress_map.keys())
 
-                for idx, l in enumerate(gating_sequence):
-                    if l.id == first_lesson_id:
+                locked_ids.clear()
+
+                for lesson in gating_sequence:
+                    # Bỏ qua bài đầu tiên
+                    if lesson.id == first_lesson_id:
                         continue
-                    prev_lessons = gating_sequence[:idx]
-                    if any(prev.id not in completed_ids for prev in prev_lessons):
-                        locked_ids.add(l.id)
 
-                for l in gating_sequence:
-                    if l.id not in progress_map and l.id != first_lesson_id:
-                        locked_ids.add(l.id)
+                    # ❗Chỉ khóa nếu chưa từng có trong progress_map (tức là user chưa bao giờ học)
+                    if lesson.id not in existing_progress_ids:
+                        locked_ids.add(lesson.id)
 
             # 9️⃣ Build curriculum + thống kê
             curriculum = []
@@ -603,6 +628,7 @@ class LearningService:
                 "id": str(lesson.id),
                 "title": lesson.title,
                 "lesson_type": lesson.lesson_type,
+                "description": lesson.description,
                 "duration": (
                     lesson.lesson_videos.duration if lesson.lesson_videos else 0
                 ),
@@ -691,6 +717,7 @@ class LearningService:
                 "quizzes": quizzes,
                 "is_completed": is_completed,
                 "is_locked": is_locked,
+                "description": lesson.description,
             }
 
         except HTTPException:
@@ -741,7 +768,7 @@ class LearningService:
 
             else:
                 lesson_active.lesson_id = lesson_id
-                lesson_active.activated_at = datetime.utcnow()
+                lesson_active.activated_at = get_now()
                 await self.db.commit()
             await self.db.commit()
             await self.db.refresh(lesson_active)
@@ -1119,3 +1146,1196 @@ class LearningService:
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(500, f"Lỗi server khi hoàn thành bài học: {e}")
+
+    async def get_code_language_by_language_id_async(self, language_id: uuid.UUID):
+        """
+        Lấy code template theo ngôn ngữ
+        """
+        try:
+            code_template = await self.db.get(SupportedLanguages, language_id)
+            if not code_template:
+                raise HTTPException(404, "Không tìm thấy template cho ngôn ngữ này")
+            if not code_template.is_active:
+                raise HTTPException(404, "Template cho ngôn ngữ này đang trống")
+            return {
+                "name": code_template.name,
+                "version": code_template.version,
+                "aliases": code_template.aliases,
+                "runtime": code_template.runtime,
+                "last_sync": code_template.last_sync,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Lỗi server khi lấy template: {e}")
+
+    async def get_lesson_code_async(self, lesson_id: str, user):
+        """
+        ✅ Lấy toàn bộ dữ liệu lesson dạng code:
+        - Một lesson có nhiều bài code (LessonCodes)
+        - Mỗi bài code có nhiều file + test case
+        - Nếu user chưa có code riêng, lấy starter làm mặc định
+        - Test case ẩn thì giấu input/output
+        - Trả về trạng thái is_pass chính xác (theo user, lesson_code_id)
+        """
+
+        try:
+            # 1️⃣ Lấy lesson kèm code + testcases + file
+            lesson = await self.db.scalar(
+                select(Lessons)
+                .options(
+                    selectinload(Lessons.lesson_codes).selectinload(
+                        LessonCodes.language
+                    ),
+                    selectinload(Lessons.lesson_codes).selectinload(
+                        LessonCodes.lesson_code_files
+                    ),
+                    selectinload(Lessons.lesson_codes).selectinload(
+                        LessonCodes.lesson_code_testcases
+                    ),
+                    selectinload(Lessons.section).selectinload(CourseSections.course),
+                )
+                .where(Lessons.id == lesson_id)
+            )
+
+            if not lesson:
+                raise HTTPException(404, "Không tìm thấy bài học")
+
+            section = lesson.section
+            course = getattr(section, "course", None)
+
+            # 2️⃣ Tiến độ học
+            progress = await self.db.scalar(
+                select(LessonProgress).where(
+                    LessonProgress.lesson_id == lesson_id,
+                    LessonProgress.user_id == user.id,
+                )
+            )
+            is_completed = bool(progress and progress.is_completed)
+            is_locked = bool(getattr(course, "is_lock_lesson", False))
+
+            # 3️⃣ Duyệt qua từng bài code
+            codes_data = []
+            for code in lesson.lesson_codes or []:
+                lang = code.language
+                language_info = {
+                    "id": str(lang.id) if lang else None,
+                    "name": lang.name if lang else None,
+                    "version": lang.version if lang else None,
+                    "runtime": lang.runtime if lang else None,
+                }
+
+                all_files = code.lesson_code_files or []
+                user_files = [
+                    f
+                    for f in all_files
+                    if f.role == "user"
+                    and f.user_id == user.id
+                    and f.lesson_code_id == code.id  # ✅ bắt buộc trùng lesson_code_id
+                ]
+                starter_files = [
+                    f
+                    for f in all_files
+                    if f.role == "starter" and f.lesson_code_id == code.id
+                ]
+
+                active_files = user_files if user_files else starter_files
+
+                def serialize_file(f):
+                    return {
+                        "id": str(f.id),
+                        "filename": f.filename,
+                        "content": f.content,
+                        "role": f.role,
+                        "is_main": bool(f.is_main),
+                        "is_pass": bool(getattr(f, "is_pass", False)),
+                    }
+
+                files_user_or_starter = [serialize_file(f) for f in active_files]
+
+                # ✅ Tính trạng thái pass chính xác (phải cùng user & lesson_code_id)
+                user_code_files = [
+                    f
+                    for f in all_files
+                    if f.role == "user"
+                    and f.user_id == user.id
+                    and f.lesson_code_id == code.id
+                ]
+                is_pass = len(user_code_files) > 0 and all(
+                    getattr(f, "is_pass", False) for f in user_code_files
+                )
+
+                # --- Testcases ---
+                testcase_items = []
+                for t in code.lesson_code_testcases or []:
+                    is_hidden = bool(t.is_sample) or (
+                        getattr(t, "is_active", True) is False
+                    )
+                    testcase_items.append(
+                        {
+                            "id": str(t.id),
+                            "input": None if is_hidden else (t.input or ""),
+                            "expected_output": (
+                                None if is_hidden else (t.expected_output or "")
+                            ),
+                            "is_sample": bool(t.is_sample),
+                            "order_index": t.order_index,
+                            "hidden": is_hidden,
+                        }
+                    )
+
+                testcase_items.sort(key=lambda x: x["order_index"])
+
+                codes_data.append(
+                    {
+                        "id": str(code.id),
+                        "title": code.title,
+                        "description": code.description,
+                        "difficulty": code.difficulty,
+                        "time_limit": code.time_limit,
+                        "memory_limit": code.memory_limit,
+                        "language": language_info,
+                        "files": files_user_or_starter,
+                        "testcases": testcase_items,
+                        "is_pass": is_pass,  # ✅ user-specific pass flag
+                    }
+                )
+
+            # 4️⃣ Kết quả
+            return {
+                "id": str(lesson.id),
+                "title": lesson.title,
+                "lesson_type": lesson.lesson_type,
+                "description": lesson.description,
+                "is_completed": is_completed,
+                "is_locked": is_locked,
+                "codes": codes_data,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Lỗi server khi lấy bài học code: {e}")
+
+    async def save_single_user_code_async(
+        self, lesson_code_id: uuid.UUID, user, file_obj: LessonCodeSaveFile
+    ):
+        """
+        ✅ Lưu một file duy nhất khi user onLeave / blur khỏi file editor.
+        - Nếu đã có: update content
+        - Nếu chưa có: insert bản ghi mới
+        """
+
+        try:
+            # 1️⃣ Kiểm tra bài code tồn tại
+            code = await self.db.scalar(
+                select(LessonCodes)
+                .where(LessonCodes.id == lesson_code_id)
+                .options(selectinload(LessonCodes.lesson_code_files))
+            )
+            if not code:
+                raise HTTPException(404, "Không tìm thấy bài code")
+
+            filename = file_obj.filename
+            content = file_obj.content
+            is_main = file_obj.is_main
+
+            # 2️⃣ Kiểm tra file của user đã tồn tại chưa
+            existing = await self.db.scalar(
+                select(LessonCodeFiles).where(
+                    LessonCodeFiles.lesson_code_id == code.id,
+                    LessonCodeFiles.filename == filename,
+                    LessonCodeFiles.user_id == user.id,
+                    LessonCodeFiles.role == "user",
+                )
+            )
+
+            if existing:
+                # update nội dung
+                await self.db.execute(
+                    update(LessonCodeFiles)
+                    .where(LessonCodeFiles.id == existing.id)
+                    .values(
+                        content=content,
+                        is_main=is_main,
+                        is_pass=False,
+                        updated_at=await to_utc_naive(get_now()),
+                    )
+                )
+                message = f"Đã cập nhật file '{filename}'"
+            else:
+                # insert mới
+                await self.db.execute(
+                    insert(LessonCodeFiles).values(
+                        lesson_code_id=code.id,
+                        filename=filename,
+                        content=content,
+                        role="user",
+                        user_id=user.id,
+                        is_main=is_main,
+                        is_pass=False,
+                        created_at=await to_utc_naive(get_now()),
+                        updated_at=await to_utc_naive(get_now()),
+                    )
+                )
+                message = f"Đã tạo mới file '{filename}'"
+
+            await self.db.commit()
+            return {"status": "ok", "message": message, "filename": filename}
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi DB khi lưu code: {e}")
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi server khi lưu code: {e}")
+
+    async def test_user_code_async(
+        self, payload: LessonCodeUserTest, user: User, lesson_code_id: uuid.UUID
+    ):
+        """
+        ✅ Test code người dùng:
+        - Lấy testcases từ DB → chạy từng cái
+        - So sánh output, kiểm tra thời gian / bộ nhớ
+        - Nếu pass toàn bộ → lưu file user + đánh dấu is_pass=True
+        - Dùng ORM + await to_utc_naive(get_now())
+        """
+
+        try:
+            # 1️⃣ Ngôn ngữ
+            lang = await self.db.scalar(
+                select(SupportedLanguages).where(
+                    SupportedLanguages.id == payload.language_id
+                )
+            )
+            if not lang:
+                raise HTTPException(400, "🚫 Ngôn ngữ không hợp lệ")
+
+            # 2️⃣ Lấy bài code + testcases
+            lesson_code = await self.db.scalar(
+                select(LessonCodes)
+                .options(selectinload(LessonCodes.lesson_code_testcases))
+                .where(LessonCodes.id == lesson_code_id)
+            )
+            if not lesson_code:
+                raise HTTPException(404, "❌ Không tìm thấy bài code")
+
+            testcases = sorted(
+                lesson_code.lesson_code_testcases or [],
+                key=lambda t: t.order_index or 0,
+            )
+            if not testcases:
+                raise HTTPException(400, "❌ Bài code chưa có testcase nào")
+
+            # 3️⃣ Giới hạn
+            time_limit = float(lesson_code.time_limit or 2.0)
+            memory_limit = int(lesson_code.memory_limit or 256_000_000)
+
+            # 4️⃣ Chuẩn bị file chạy (main đi trước)
+            files = [
+                {"name": f.filename, "content": f.content}
+                for f in sorted(payload.files, key=lambda x: not x.is_main)
+            ]
+
+            results = []
+
+            # 5️⃣ Duyệt từng testcase
+            for tc in testcases:
+                try:
+                    run_result = await self.piston.run_code(
+                        language=lang.name,
+                        version=lang.version,
+                        files=files,
+                        stdin=tc.input or "",
+                    )
+
+                    run = run_result.get("run", {}) or {}
+                    stdout = (run.get("stdout") or "").strip()
+                    stderr = (run.get("stderr") or "").strip()
+                    exit_code = int(run.get("code", 0))
+                    cpu_time = float(run.get("cpu_time", 0))
+                    memory = int(run.get("memory", 0))
+                    expected = (tc.expected_output or "").strip()
+
+                    # Phân loại kết quả
+                    if exit_code != 0 or stderr:
+                        verdict = "runtime_error"
+                    elif cpu_time > time_limit:
+                        verdict = "time_limit_exceeded"
+                    elif memory > memory_limit:
+                        verdict = "memory_limit_exceeded"
+                    elif stdout == expected:
+                        verdict = "passed"
+                    else:
+                        verdict = "failed"
+                    if tc.is_sample:
+                        results.append(
+                            {
+                                "id": str(tc.id),  # ✅ thêm id test case
+                                "index": tc.order_index or 0,
+                                "exit_code": exit_code,
+                                "cpu_time": cpu_time,
+                                "memory": memory,
+                                "language": lang.name,
+                                "version": lang.version,
+                                "result": verdict,
+                                "is_hidden": True,
+                            }
+                        )
+                    else:
+                        results.append(
+                            {
+                                "id": str(tc.id),  # ✅ thêm id test case
+                                "index": tc.order_index or 0,
+                                "input": tc.input,
+                                "expected": expected,
+                                "output": stdout,
+                                "stderr": stderr,
+                                "exit_code": exit_code,
+                                "cpu_time": cpu_time,
+                                "memory": memory,
+                                "language": lang.name,
+                                "version": lang.version,
+                                "result": verdict,
+                                "is_hidden": False,
+                            }
+                        )
+
+                except Exception as e:
+                    logger.error(f"❌ Lỗi khi chạy testcase {tc.id}: {e}")
+                    results.append(
+                        {
+                            "id": str(tc.id),
+                            "index": tc.order_index or 0,
+                            "result": "internal_error",
+                            "error_message": str(e),
+                        }
+                    )
+
+            # 6️⃣ Tổng kết
+            total = len(results)
+            passed = sum(1 for r in results if r["result"] == "passed")
+            all_passed = passed == total
+
+            # 7️⃣ Nếu pass toàn bộ → lưu code user
+            if all_passed:
+                logger.info(f"✅ User {user.id} pass toàn bộ test {lesson_code.id}")
+
+                await self.db.execute(
+                    update(LessonCodeFiles)
+                    .where(
+                        LessonCodeFiles.lesson_code_id == lesson_code.id,
+                        LessonCodeFiles.user_id == user.id,
+                        LessonCodeFiles.role == "user",
+                    )
+                    .values(is_pass=True, updated_at=await to_utc_naive(get_now()))
+                )
+                await self.db.commit()
+
+            # 8️⃣ Trả kết quả
+            return {
+                "status": "passed" if all_passed else "failed",
+                "passed": passed,
+                "failed": total - passed,
+                "total": total,
+                "saved": all_passed,
+                "language": lang.name,
+                "version": lang.version,
+                "details": results,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"🔥 Lỗi server khi test code: {e}")
+            raise HTTPException(500, f"Lỗi server khi test code: {e}")
+
+    async def get_lesson_start_code_async(self, lesson_id: uuid.UUID, user: User):
+        """
+        ✅ Lấy nội dung code để hiển thị khi user bắt đầu làm bài:
+        - Nếu user đã có code riêng (role='user') → trả code đó
+        - Nếu chưa có → trả starter files (role='starter')
+        - Chỉ trả danh sách file (id, filename, content, role, is_main)
+        """
+
+        try:
+            # 1️⃣ Lấy lesson và toàn bộ lesson_codes + lesson_code_files
+            lesson = await self.db.scalar(
+                select(Lessons)
+                .options(
+                    selectinload(Lessons.lesson_codes).selectinload(
+                        LessonCodes.lesson_code_files
+                    )
+                )
+                .where(Lessons.id == lesson_id)
+            )
+
+            if not lesson:
+                raise HTTPException(404, "❌ Không tìm thấy bài học")
+
+            lesson_codes = lesson.lesson_codes or []
+            if not lesson_codes:
+                raise HTTPException(404, "❌ Bài học chưa có bài code nào")
+
+            files_result = []
+
+            # 2️⃣ Lấy tất cả file khởi đầu cho từng bài code
+            for code in lesson_codes:
+                all_files = code.lesson_code_files or []
+                user_files = [
+                    f for f in all_files if f.role == "user" and f.user_id == user.id
+                ]
+                starter_files = [f for f in all_files if f.role == "starter"]
+
+                active_files = user_files if user_files else starter_files
+
+                for f in active_files:
+                    files_result.append(
+                        {
+                            "id": str(f.id),
+                            "filename": f.filename,
+                            "content": f.content,
+                            "role": f.role,
+                            "is_main": bool(f.is_main),
+                            "lesson_code_id": str(code.id),
+                        }
+                    )
+
+            # 3️⃣ Nếu không có file nào
+            if not files_result:
+                raise HTTPException(404, "❌ Không tìm thấy file khởi đầu")
+
+            return {"lesson_id": str(lesson.id), "files": files_result}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"🔥 Lỗi server khi lấy start code: {e}")
+            raise HTTPException(500, f"Lỗi server khi lấy start code: {e}")
+
+    # 🧠 Chạy nền nhúng embedding
+    @staticmethod
+    async def _process_embedding_background(note_id: uuid.UUID):
+
+        async with AsyncSessionLocal() as db:
+            try:
+                note = await db.scalar(
+                    select(LessonNotes).where(LessonNotes.id == note_id)
+                )
+                if not note or not note.content.strip():
+                    return
+
+                embedding_service = await get_embedding_service()
+                vector = await embedding_service.embed_google_normalized(note.content)
+
+                note.embedding = vector
+                note.created_at = get_now()
+                await db.commit()
+
+                print(f"✅ Đã nhúng embedding cho note {note_id}")
+            except Exception as e:
+                await db.rollback()
+                print(f"❌ Lỗi khi nhúng embedding note {note_id}: {e}")
+
+    # ✏️ Tạo ghi chú cho bài học
+    async def create_lesson_note_async(
+        self,
+        lesson_id: uuid.UUID,
+        schema: CreateLessonNote,
+        user_id: uuid.UUID,
+        background_tasks: BackgroundTasks,
+    ):
+        try:
+            # 1️⃣ Kiểm tra bài học tồn tại
+            lesson = await self.db.scalar(
+                select(Lessons).where(Lessons.id == lesson_id)
+            )
+            if not lesson:
+                raise HTTPException(404, f"Không tìm thấy bài học {lesson_id}")
+
+            # 2️⃣ Tạo ghi chú
+            new_note = LessonNotes(
+                id=uuid.uuid4(),
+                lesson_id=lesson_id,
+                user_id=user_id,
+                time_seconds=schema.time_seconds,
+                content=schema.content.strip(),
+                created_at=await to_utc_naive(get_now()),
+            )
+
+            self.db.add(new_note)
+            await self.db.commit()
+            await self.db.refresh(new_note)
+
+            # 3️⃣ Gọi nền nhúng embedding (async)
+            background_tasks.add_task(
+                LearningService._process_embedding_background, new_note.id
+            )
+
+            return {
+                "message": "Tạo ghi chú thành công",
+                "id": new_note.id,
+                "status": "embedding_processing",
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi khi tạo ghi chú: {e}")
+
+    async def get_notes_by_lesson_and_user_async(
+        self,
+        lesson_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ):
+        try:
+            query = (
+                select(LessonNotes)
+                .where(
+                    LessonNotes.lesson_id == lesson_id,
+                    LessonNotes.user_id == user_id,
+                )
+                .order_by(asc(LessonNotes.time_seconds))
+            )
+            result = await self.db.execute(query)
+            notes = result.scalars().all()
+
+            return [
+                {
+                    "id": str(note.id),
+                    "lesson_id": str(note.lesson_id),
+                    "time_seconds": float(note.time_seconds),
+                    "content": note.content,
+                    "created_at": note.created_at.isoformat(),
+                }
+                for note in notes
+            ]
+
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi khi lấy ghi chú: {e}")
+
+    async def delete_note_async(self, note_id: uuid.UUID, user_id: uuid.UUID):
+        try:
+            result = await self.db.execute(
+                delete(LessonNotes)
+                .where(
+                    LessonNotes.id == note_id,
+                    LessonNotes.user_id == user_id,
+                )
+                .returning(LessonNotes.id)
+            )
+            deleted = result.scalar()
+            if not deleted:
+                raise HTTPException(
+                    404, "Không tìm thấy ghi chú hoặc bạn không có quyền xóa"
+                )
+
+            await self.db.commit()
+            return {"message": "Xóa ghi chú thành công", "id": str(deleted)}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi khi xóa ghi chú: {e}")
+
+    async def update_note_async(
+        self,
+        note_id: uuid.UUID,
+        user_id: uuid.UUID,
+        schema: UpdateLessonNote,
+    ):
+        try:
+            note = await self.db.scalar(
+                select(LessonNotes).where(
+                    LessonNotes.id == note_id,
+                    LessonNotes.user_id == user_id,
+                )
+            )
+            if not note:
+                raise HTTPException(
+                    404, "Không tìm thấy ghi chú hoặc bạn không có quyền sửa"
+                )
+
+            note.content = schema.content.strip()
+            if schema.time_seconds is not None:
+                note.time_seconds = float(schema.time_seconds)
+
+            await self.db.commit()
+            await self.db.refresh(note)
+
+            return {
+                "message": "Cập nhật ghi chú thành công",
+                "note": {
+                    "id": str(note.id),
+                    "lesson_id": str(note.lesson_id),
+                    "time_seconds": note.time_seconds,
+                    "content": note.content,
+                    "updated_at": note.created_at.isoformat(),
+                },
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi khi cập nhật ghi chú: {e}")
+
+    async def get_lesson_comments_async(
+        self,
+        lesson_id: uuid.UUID,
+        current_user_id: Optional[uuid.UUID] = None,
+        root_id: Optional[uuid.UUID] = None,
+        depth_target: int = 0,
+        limit: int = 10,
+        cursor: Optional[str] = None,
+    ):
+        """
+        API: Lấy bình luận theo cấp (depth)
+        - depth_target = 0 → comment gốc
+        - depth_target = 1 → reply cấp 1 theo root_id
+        - depth_target >= 2 → thread sâu hơn theo root_id
+        Thêm thông tin reaction (chỉ 1 loại duy nhất, không có reaction_type)
+        """
+        try:
+            # 🧠 Lấy id giảng viên của khóa học
+            author_stmt = (
+                select(Courses.instructor_id)
+                .join(Lessons, Lessons.course_id == Courses.id)
+                .where(Lessons.id == lesson_id)
+            )
+            author_id = await self.db.scalar(author_stmt)
+
+            # 🎯 Truy vấn bình luận theo cấp độ
+            stmt = select(LessonComments).options(selectinload(LessonComments.user))
+
+            if depth_target == 0:
+                stmt = stmt.where(
+                    LessonComments.lesson_id == lesson_id,
+                    LessonComments.depth == 0,
+                ).order_by(desc(LessonComments.created_at))
+                cursor_dir_desc = True
+            elif depth_target == 1:
+                if not root_id:
+                    raise HTTPException(400, "Thiếu root_id khi truy vấn cấp 1")
+                stmt = stmt.where(
+                    LessonComments.root_id == root_id,
+                    LessonComments.depth == 1,
+                ).order_by(asc(LessonComments.created_at))
+                cursor_dir_desc = False
+            else:
+                if not root_id:
+                    raise HTTPException(400, "Thiếu root_id khi truy vấn cấp ≥2")
+                stmt = stmt.where(
+                    LessonComments.root_id == root_id,
+                    LessonComments.depth >= 2,
+                ).order_by(asc(LessonComments.created_at))
+                cursor_dir_desc = False
+
+            # ⏱ Cursor-based pagination
+            if cursor:
+                try:
+                    cursor_dt = datetime.fromisoformat(cursor)
+                    # Đảm bảo cursor_dt là naive (vì LessonComments.created_at là timezone-aware)
+                    # PostgreSQL sẽ tự convert, nhưng để tránh lỗi trong Python ta chuyển về naive
+                    from app.libs.formats.datetime import VIETNAM_TIMEZONE
+
+                    if cursor_dt.tzinfo is not None:
+                        # Nếu có timezone, chuyển sang UTC+7 rồi bỏ tzinfo
+                        cursor_dt = cursor_dt.astimezone(VIETNAM_TIMEZONE).replace(
+                            tzinfo=None
+                        )
+                    else:
+                        # Nếu là naive, giữ nguyên (giả định đã là UTC+7)
+                        cursor_dt = cursor_dt
+                except ValueError:
+                    raise HTTPException(400, "Cursor không hợp lệ (ISO8601)")
+                if cursor_dir_desc:
+                    stmt = stmt.where(LessonComments.created_at < cursor_dt)
+                else:
+                    stmt = stmt.where(LessonComments.created_at > cursor_dt)
+
+            stmt = stmt.limit(limit + 1)
+            rows = (await self.db.scalars(stmt)).all()
+
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            next_cursor = rows[-1].created_at.isoformat() if has_next and rows else None
+
+            if not rows:
+                return {
+                    "type": f"level_{depth_target}_comments",
+                    "root_id": str(root_id) if root_id else None,
+                    "items": [],
+                    "next_cursor": None,
+                    "has_next": False,
+                }
+
+            # 📊 Đếm reply cấp con
+            count_map = {}
+            if depth_target == 0:
+                root_ids = [r.id for r in rows]
+                res = await self.db.execute(
+                    select(LessonComments.root_id, func.count())
+                    .where(
+                        LessonComments.root_id.in_(root_ids),
+                        LessonComments.depth > 0,
+                    )
+                    .group_by(LessonComments.root_id)
+                )
+                count_map = {str(rid): int(cnt) for rid, cnt in res.fetchall()}
+            elif depth_target == 1:
+                parent_ids = [r.id for r in rows]
+                res = await self.db.execute(
+                    select(LessonComments.parent_id, func.count())
+                    .where(
+                        LessonComments.parent_id.in_(parent_ids),
+                        LessonComments.depth == 2,
+                    )
+                    .group_by(LessonComments.parent_id)
+                )
+                count_map = {str(pid): int(cnt) for pid, cnt in res.fetchall()}
+
+            # ❤️ Kiểm tra reaction
+            comment_ids = [r.id for r in rows]
+            res_react = await self.db.execute(
+                select(LessonCommentReactions.comment_id, func.count())
+                .where(LessonCommentReactions.comment_id.in_(comment_ids))
+                .group_by(LessonCommentReactions.comment_id)
+            )
+            react_map = {str(cid): int(cnt) for cid, cnt in res_react.fetchall()}
+
+            my_react_set = set()
+            if current_user_id:
+                res_my = await self.db.execute(
+                    select(LessonCommentReactions.comment_id).where(
+                        LessonCommentReactions.comment_id.in_(comment_ids),
+                        LessonCommentReactions.user_id == current_user_id,
+                    )
+                )
+                my_react_set = {str(cid) for (cid,) in res_my.fetchall()}
+
+            # 🧱 Chuẩn hóa dữ liệu trả về
+            items = []
+            for c in rows:
+                cid = str(c.id)
+                items.append(
+                    {
+                        "id": cid,
+                        "root_id": str(c.root_id),
+                        "parent_id": str(c.parent_id) if c.parent_id else None,
+                        "lesson_id": str(c.lesson_id),
+                        "user_id": str(c.user_id),
+                        "user_name": getattr(c.user, "fullname", None),
+                        "user_avatar": getattr(c.user, "avatar", None),
+                        "content": c.content,
+                        "depth": c.depth,
+                        "created_at": c.created_at.isoformat(),
+                        "reply_count_all": (
+                            int(count_map.get(cid, 0)) if depth_target <= 1 else 0
+                        ),
+                        "is_owner": c.user_id == current_user_id,
+                        "is_author": c.user_id == author_id,
+                        "reactions": {
+                            "total": int(react_map.get(cid, 0)),
+                            "has_reacted": cid in my_react_set,
+                        },
+                    }
+                )
+
+            return {
+                "type": f"level_{depth_target}_comments",
+                "root_id": str(root_id) if root_id else None,
+                "items": items,
+                "next_cursor": next_cursor,
+                "has_next": has_next,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Lỗi khi lấy bình luận: {e}")
+
+    async def get_list_react_by_comment_id(
+        self,
+        comment_id: uuid.UUID,
+    ):
+        """
+        Lấy danh sách user đã thả reaction cho một bình luận.
+        (Giả định: mỗi record trong lesson_comment_reactions tương ứng 1 user reaction duy nhất)
+        """
+        try:
+            stmt = (
+                select(LessonCommentReactions)
+                .options(
+                    selectinload(LessonCommentReactions.user),
+                    selectinload(LessonCommentReactions.comment),
+                )
+                .where(LessonCommentReactions.comment_id == comment_id)
+                .order_by(desc(LessonCommentReactions.created_at))
+            )
+
+            reactions = (await self.db.scalars(stmt)).all()
+
+            if not reactions:
+                return []
+
+            return [
+                {
+                    "id": str(r.id),
+                    "comment_id": str(r.comment_id),
+                    "user_id": str(r.user_id),
+                    "user_name": getattr(r.user, "fullname", None),
+                    "user_avatar": getattr(r.user, "avatar", None),
+                    "is_owner": r.user_id
+                    == r.comment.user_id,  # user là tác giả comment
+                    "created_at": r.created_at.isoformat(),
+                }
+                for r in reactions
+            ]
+
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi khi lấy danh sách reaction: {e}")
+
+    async def toggle_comment_reaction_async(
+        self,
+        comment_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ):
+        """
+        Thả / bỏ thả tym cho bình luận (HTTP + realtime broadcast)
+        Trả về định dạng:
+        {
+          "type": "comment_reacted",
+          "comment_id": "...",
+          "lesson_id": "...",
+          "reactions": {
+              "total": 1,
+              "has_reacted": true
+          }
+        }
+        """
+        try:
+            # ✅ Kiểm tra bình luận tồn tại
+            comment = await self.db.scalar(
+                select(LessonComments).where(LessonComments.id == comment_id)
+            )
+            if not comment:
+                raise HTTPException(404, "Bình luận không tồn tại")
+
+            # ✅ Kiểm tra user đã thả tym chưa
+            existing = await self.db.scalar(
+                select(LessonCommentReactions).where(
+                    LessonCommentReactions.comment_id == comment_id,
+                    LessonCommentReactions.user_id == user_id,
+                )
+            )
+
+            # 🩶 Nếu đã có → bỏ thả tym
+            if existing:
+                await self.db.delete(existing)
+                await self.db.commit()
+
+                # Đếm lại tổng
+                total = (
+                    await self.db.scalar(
+                        select(func.count()).where(
+                            LessonCommentReactions.comment_id == comment_id
+                        )
+                    )
+                    or 0
+                )
+
+                result = {
+                    "type": "comment_unreacted",
+                    "comment_id": str(comment_id),
+                    "lesson_id": str(comment.lesson_id),
+                    "reactions": {
+                        "total": total,
+                        "has_reacted": False,
+                    },
+                }
+
+                await ws_manager.broadcast(
+                    f"lesson_comment_ws_lesson_id_{comment.lesson_id}", result
+                )
+                return result
+
+            # ❤️ Nếu chưa → thêm mới
+            new_reaction = LessonCommentReactions(
+                comment_id=comment_id,
+                user_id=user_id,
+            )
+            self.db.add(new_reaction)
+            await self.db.commit()
+            await self.db.refresh(new_reaction)
+
+            total = (
+                await self.db.scalar(
+                    select(func.count()).where(
+                        LessonCommentReactions.comment_id == comment_id
+                    )
+                )
+                or 1
+            )
+
+            result = {
+                "type": "comment_reacted",
+                "comment_id": str(comment_id),
+                "lesson_id": str(comment.lesson_id),
+                "reactions": {
+                    "total": total,
+                    "has_reacted": True,
+                },
+            }
+
+            await ws_manager.broadcast(
+                f"lesson_comment_ws_lesson_id_{comment.lesson_id}", result
+            )
+            return result
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi khi xử lý thả tym: {e}")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+    @staticmethod
+    async def create_lesson_comment_async(
+        lesson_id: uuid.UUID,
+        schema: CreateLessonComment,
+        user: User,
+    ):
+        async with AsyncSessionLocal() as db:
+            try:
+                depth = 0
+                root_id = None
+
+                # Nếu có parent → xác định root và depth
+                if schema.parent_id:
+                    parent = await db.scalar(
+                        select(LessonComments).where(
+                            LessonComments.id == schema.parent_id
+                        )
+                    )
+                    if not parent:
+                        return {"error": "Bình luận cha không tồn tại"}
+
+                    # Nếu người dùng truyền nhầm id cấp 2 thì fix về depth=2, root_id của cấp 1
+                    if parent.depth >= 1:
+                        depth = 2
+                        root_id = parent.root_id or parent.id
+                    else:
+                        depth = 1
+                        root_id = parent.id
+
+                # Tạo bình luận mới
+                new_comment = LessonComments(
+                    lesson_id=lesson_id,
+                    user_id=user.id,
+                    parent_id=schema.parent_id,
+                    root_id=root_id,
+                    content=schema.content.strip(),
+                    depth=depth,
+                    created_at=await to_utc_naive(get_now()),
+                    updated_at=await to_utc_naive(get_now()),
+                )
+
+                db.add(new_comment)
+                await db.flush()
+
+                if not new_comment.root_id:
+                    new_comment.root_id = new_comment.id
+
+                await db.commit()
+                await db.refresh(new_comment)
+                return {
+                    "type": "comment_created",
+                    "comment": {
+                        "id": str(new_comment.id),
+                        "lesson_id": str(new_comment.lesson_id),
+                        "root_id": str(new_comment.root_id),
+                        "user_id": str(new_comment.user_id),
+                        "user_avatar": user.avatar,
+                        "user_name": user.fullname,
+                        "parent_id": (
+                            str(new_comment.parent_id)
+                            if new_comment.parent_id
+                            else None
+                        ),
+                        "content": new_comment.content,
+                        "status": new_comment.status,
+                        "depth": new_comment.depth,
+                        "created_at": new_comment.created_at.isoformat(),
+                        "updated_at": (
+                            new_comment.updated_at.isoformat()
+                            if new_comment.updated_at
+                            else None
+                        ),
+                    },
+                }
+
+            except Exception as e:
+                await db.rollback()
+                return {"error": f"Lỗi khi tạo bình luận: {e}"}
+
+    @staticmethod
+    async def update_lesson_comment_async(
+        comment_id: uuid.UUID, schema: UpdateLessonComment, user
+    ):
+
+        async with AsyncSessionLocal() as db:
+            try:
+                # 1) Tồn tại?
+                comment = await db.scalar(
+                    select(LessonComments).where(LessonComments.id == comment_id)
+                )
+                if not comment:
+                    return {"error": "Không tìm thấy bình luận", "code": 404}
+
+                # 2) Chính chủ?
+                if str(comment.user_id) != str(user.id):
+                    return {
+                        "error": "Bạn không thể sửa bình luận của người khác",
+                        "code": 403,
+                    }
+
+                # 3) Validate & cập nhật
+                new_content = (schema.content or "").strip()
+                if not new_content:
+                    return {"error": "Nội dung không được rỗng", "code": 422}
+
+                comment.content = new_content
+                comment.updated_at = get_now()  # ✅ không await
+
+                await db.commit()
+                await db.refresh(comment)
+
+                # 4) Trả về cùng format với create
+                return {
+                    "type": "comment_updated",
+                    "comment": {
+                        "id": str(comment.id),
+                        "lesson_id": str(comment.lesson_id),
+                        "root_id": str(comment.root_id) if comment.root_id else None,
+                        "user_id": str(comment.user_id),
+                        "user_avatar": getattr(user, "avatar", None),
+                        "user_name": getattr(user, "fullname", None),
+                        "parent_id": (
+                            str(comment.parent_id) if comment.parent_id else None
+                        ),
+                        "content": comment.content,
+                        "status": comment.status,
+                        "depth": comment.depth,
+                        "created_at": (
+                            comment.created_at.isoformat()
+                            if comment.created_at
+                            else None
+                        ),
+                        "updated_at": (
+                            comment.updated_at.isoformat()
+                            if comment.updated_at
+                            else None
+                        ),
+                    },
+                }
+
+            except Exception as e:
+                await db.rollback()
+                return {"error": f"Lỗi khi cập nhật bình luận: {e}", "code": 500}
+
+    @staticmethod
+    async def delete_lesson_comment_async(
+        comment_id: uuid.UUID,
+        current_user_id: uuid.UUID,
+    ):
+        """
+        Xóa bình luận:
+        - Nếu bình luận có reply → đổi sang hidden (soft-hide).
+        - Nếu không có reply → xóa hẳn (hard-delete).
+        Yêu cầu: chỉ chính chủ (hoặc tuỳ bạn mở rộng quyền ADMIN/MOD sau).
+        """
+        from app.db.models.database import (
+            LessonComments,  # đảm bảo FK reactions ON DELETE CASCADE
+        )
+        from app.db.sesson import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            try:
+                # 1) Lấy comment
+                comment = await db.get(LessonComments, comment_id)
+                if not comment:
+                    return {"error": "Bình luận không tồn tại", "code": 404}
+
+                # 2) Quyền: chính chủ
+                if str(comment.user_id) != str(current_user_id):
+                    return {
+                        "error": "Bạn không có quyền xóa bình luận này",
+                        "code": 403,
+                    }
+
+                # 3) Có con không? (tối ưu với EXISTS)
+                has_child = await db.scalar(
+                    select(exists().where(LessonComments.parent_id == comment_id))
+                )
+
+                if has_child:
+                    # 3a) Có reply → ẩn bình luận (soft-hide)
+                    # KHÔNG đụng tới reactions / FK để tránh NOT NULL violation
+                    comment.status = "hidden"
+                    # chỉ thay content nếu bạn muốn làm “ghost”
+                    comment.content = "[Bình luận đã bị ẩn]"
+                    comment.updated_at = get_now()
+                    await db.commit()
+                    await db.refresh(comment)
+
+                    return {
+                        "type": "comment_hidden",
+                        "comment": {
+                            "id": str(comment.id),
+                            "lesson_id": str(comment.lesson_id),
+                            "root_id": (
+                                str(comment.root_id) if comment.root_id else None
+                            ),
+                            "parent_id": (
+                                str(comment.parent_id) if comment.parent_id else None
+                            ),
+                            "status": comment.status,
+                            "content": comment.content,
+                            "updated_at": (
+                                comment.updated_at.isoformat()
+                                if comment.updated_at
+                                else None
+                            ),
+                        },
+                        "message": "Bình luận đã bị ẩn do có phản hồi con",
+                    }
+
+                # 3b) Không có reply → xóa hẳn
+                await db.execute(
+                    delete(LessonCommentReactions).where(
+                        LessonComments.id == comment_id
+                    )
+                )
+                await db.delete(comment)  # để DB ON DELETE CASCADE xoá reactions
+                await db.commit()
+
+                return {
+                    "type": "comment_deleted",
+                    "comment": {"id": str(comment_id)},
+                    "message": "Đã xóa bình luận thành công",
+                }
+
+            except Exception as e:
+                await db.rollback()
+                return {"error": f"Lỗi khi xóa bình luận: {e}", "code": 500}

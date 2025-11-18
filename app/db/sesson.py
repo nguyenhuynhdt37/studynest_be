@@ -4,9 +4,11 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.settings import settings
+
 DATABASE_URL = os.getenv(
     "DATABASE_ASYNC_URL",
-    "postgresql+asyncpg://huynh:Huynh2004@localhost:5432/elearn",
+    settings.DATABASE_ASYNC_URL,
 )
 
 # ✅ Tạo engine async

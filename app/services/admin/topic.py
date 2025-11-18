@@ -7,10 +7,10 @@ from slugify import slugify
 from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.embedding import EmbeddingService
+from app.core.embedding import EmbeddingService, get_embedding_service
 from app.db.models.database import Categories, Courses, Topics
 from app.db.sesson import AsyncSessionLocal, get_session
-from app.libs.formats.datetime import to_utc_naive
+from app.libs.formats.datetime import now as get_now, to_utc_naive
 from app.schemas.admin.topic import TopicCreate, TopicUpdate
 
 
@@ -44,8 +44,8 @@ class TopicService:
             **schema.dict(),
             order_index=new_order,
             slug=slug,
-            created_at=to_utc_naive(datetime.utcnow()),
-            updated_at=to_utc_naive(datetime.utcnow()),
+            created_at=await to_utc_naive(get_now()),
+            updated_at=await to_utc_naive(get_now()),
         )
 
         self.db.add(new_topic)
@@ -61,14 +61,14 @@ class TopicService:
     async def process_embedding_create_async(topic_id: UUID, text: str):
         async with AsyncSessionLocal() as db:
             try:
-                embedding = EmbeddingService()
-                vector = await embedding.embed_google_3072(text)
+                embedding = await get_embedding_service()
+                vector = await embedding.embed_google_normalized(text)
                 await db.execute(
                     update(Topics)
                     .where(Topics.id == topic_id)
                     .values(
                         embedding=vector,
-                        updated_at=to_utc_naive(datetime.utcnow()),
+                        updated_at=await to_utc_naive(get_now()),
                     )
                 )
                 await db.commit()
@@ -224,7 +224,7 @@ class TopicService:
         if schema.is_active is not None:
             topic.is_active = schema.is_active
 
-        topic.updated_at = to_utc_naive(datetime.utcnow())
+        topic.updated_at = await to_utc_naive(get_now())
 
         # 4️⃣ Lưu thay đổi
         await self.db.commit()
@@ -256,15 +256,15 @@ class TopicService:
         """Xử lý tái tạo embedding nền."""
         async with AsyncSessionLocal() as db:
             try:
-                embedding = EmbeddingService()
-                vector = await embedding.embed_google_3072(text)
+                embedding = await get_embedding_service()
+                vector = await embedding.embed_google_normalized(text)
 
                 await db.execute(
                     update(Topics)
                     .where(Topics.id == topic_id)
                     .values(
                         embedding=vector,
-                        updated_at=to_utc_naive(datetime.utcnow()),
+                        updated_at=await to_utc_naive(get_now()),
                     )
                 )
                 await db.commit()

@@ -1,15 +1,15 @@
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import numpy as np
 from fastapi import BackgroundTasks, Depends, HTTPException
 from sqlalchemy import exists, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql import text
 
-from app.core.embedding import EmbeddingService
+from app.core.deps import AuthorizationService
+from app.core.embedding import EmbeddingService, get_embedding_service
 from app.db.models.database import (
     Categories,
     CourseEnrollments,
@@ -22,14 +22,18 @@ from app.db.models.database import (
     User,
 )
 from app.db.sesson import get_session
+from app.libs.formats.datetime import now as get_now
+from app.libs.formats.datetime import strip_tz
 from app.schemas.lecturer.courses import CourseReview
+from app.schemas.shares.notification import NotificationCreateSchema
+from app.services.shares.notification import NotificationService
 
 
 class CoursePublicService:
     def __init__(
         self,
         db: AsyncSession = Depends(get_session),
-        embedding: EmbeddingService = Depends(EmbeddingService),
+        embedding: EmbeddingService = Depends(get_embedding_service),
     ):
         self.db = db
         self.embedding = embedding
@@ -80,8 +84,8 @@ class CoursePublicService:
             )
             if schema.content:
                 # 🧩 Embedding (chuyển văn bản thành vector)
-                new_course_review.embedding = await self.embedding.embed_google_3072(
-                    schema.content
+                new_course_review.embedding = (
+                    await self.embedding.embed_google_normalized(schema.content)
                 )
 
                 # 💬 Sentiment
@@ -137,19 +141,21 @@ class CoursePublicService:
     async def get_course_feed_async(
         self,
         title: str,
-        # views | total_enrolls | rating_avg | created_at | personalization
-        order_field: str = "views",
+        order_field: str = "views",  # views | total_enrolls | rating_avg | created_at | personalization
         limit: int = 10,
         cursor: str | None = None,
         user: User | None = None,
     ):
-        now = datetime.now(timezone.utc)
+        now = get_now()
         offset = int(cursor) if cursor and cursor.isdigit() else 0
 
-        # 1️⃣ Tính cutoff cho tag
+        # 1️⃣ Lấy thống kê cơ bản để tạo cutoff cho tag
         stmt_all = select(
             Courses.views, Courses.total_enrolls, Courses.rating_avg
-        ).where(Courses.is_published.is_(True))
+        ).where(
+            Courses.is_published.is_(True),
+            Courses.approval_status == "approved",
+        )
         data = (await self.db.execute(stmt_all)).mappings().all()
         if not data:
             return {"title": title, "items": [], "next_cursor": None}
@@ -161,21 +167,28 @@ class CoursePublicService:
         # 2️⃣ PERSONALIZATION MODE
         if order_field == "personalization" and user is not None:
             user_embedding = user.preferences_embedding
+
+            # Subquery: loại bỏ khóa học user đã thanh toán hoàn tất
+            paid_subq = select(CourseEnrollments.id).where(
+                CourseEnrollments.course_id == Courses.id,
+                CourseEnrollments.user_id == user.id,
+                CourseEnrollments.status == "active",
+            )
+
             if (
                 user_embedding is None
                 or not isinstance(user_embedding, (list, np.ndarray))
-                or len(user_embedding) != 3072
+                or len(user_embedding) != 1536
             ):
-                subq = select(CourseEnrollments.id).where(
-                    CourseEnrollments.course_id == Courses.id,
-                    CourseEnrollments.user_id == user.id,
-                )
-
+                # Không có embedding → fallback theo lượt xem
                 stmt_page = (
                     select(Courses)
                     .options(selectinload(Courses.instructor))
-                    .where(Courses.is_published.is_(True))
-                    .where(~exists(subq))
+                    .where(
+                        Courses.is_published.is_(True),
+                        Courses.approval_status == "approved",
+                        # ~exists(paid_subq),
+                    )
                     .order_by(Courses.views.desc())
                     .offset(offset)
                     .limit(limit + 1)
@@ -183,6 +196,7 @@ class CoursePublicService:
                 result_page = await self.db.execute(stmt_page)
                 courses = result_page.scalars().all()
             else:
+                # Có embedding → dùng cosine similarity
                 if hasattr(user_embedding, "tolist"):
                     user_embedding = user_embedding.tolist()
                 embedding_str = "[" + ",".join(f"{x:.8f}" for x in user_embedding) + "]"
@@ -194,29 +208,40 @@ class CoursePublicService:
                             f"(1 - cosine_distance(public.courses.embedding, '{embedding_str}'::vector)) AS similarity"
                         ),
                     )
-                    .where(Courses.is_published.is_(True))
-                    .where(Courses.embedding.is_not(None))
+                    .where(
+                        Courses.is_published.is_(True),
+                        Courses.approval_status == "approved",
+                        Courses.embedding.is_not(None),
+                        ~exists(paid_subq),
+                    )
                     .order_by(text("similarity DESC NULLS LAST"), Courses.id.desc())
                     .offset(offset)
                     .limit(limit + 1)
                 )
 
                 result_page = await self.db.execute(stmt_page)
-                rows = result_page.all()  # (Courses, similarity)
+                rows = result_page.all()
                 courses = [r[0] for r in rows]
 
-        # 3️⃣ SORT MODE
+        # 3️⃣ SORT MODE (views, enrolls, rating, created_at)
         else:
             order_column = getattr(Courses, order_field, Courses.views)
+
             if user is not None:
-                subq = select(CourseEnrollments.id).where(
+                paid_subq = select(CourseEnrollments.id).where(
                     CourseEnrollments.course_id == Courses.id,
                     CourseEnrollments.user_id == user.id,
+                    CourseEnrollments.status == "active",
                 )
+
                 stmt_page = (
                     select(Courses)
                     .options(selectinload(Courses.instructor))
-                    .where(Courses.is_published.is_(True), ~exists(subq))
+                    .where(
+                        Courses.is_published.is_(True),
+                        Courses.approval_status == "approved",
+                        # ~exists(paid_subq),
+                    )
                     .order_by(order_column.desc())
                     .offset(offset)
                     .limit(limit + 1)
@@ -225,15 +250,19 @@ class CoursePublicService:
                 stmt_page = (
                     select(Courses)
                     .options(selectinload(Courses.instructor))
-                    .where(Courses.is_published.is_(True))
+                    .where(
+                        Courses.is_published.is_(True),
+                        Courses.approval_status == "approved",
+                    )
                     .order_by(order_column.desc())
                     .offset(offset)
                     .limit(limit + 1)
                 )
+
             result_page = await self.db.execute(stmt_page)
             courses = result_page.scalars().all()
 
-        # 4️⃣ Xác định trang kế
+        # 4️⃣ Xác định next_cursor
         has_next = len(courses) == limit + 1
         if has_next:
             courses = courses[:-1]
@@ -241,7 +270,7 @@ class CoursePublicService:
         else:
             next_cursor = None
 
-        # 5️⃣ Tạo tag
+        # 5️⃣ Tạo tag hiển thị
         seven_days_ago = now - timedelta(days=7)
         items = []
         for c in courses:
@@ -252,7 +281,7 @@ class CoursePublicService:
                 tags.append("bán chạy nhất")
             if (c.rating_avg or 0) >= rating_cutoff:
                 tags.append("được yêu thích")
-            if c.created_at and c.created_at >= seven_days_ago:
+            if c.created_at and strip_tz(c.created_at) >= seven_days_ago:
                 tags.append("mới ra mắt")
 
             items.append(
@@ -496,7 +525,7 @@ class CoursePublicService:
                                     "is_preview": lesson.is_preview,
                                     "duration": (
                                         video_map.get(lesson.id).duration
-                                        if lesson.id in video_map
+                                        if video_map.get(lesson.id) is not None
                                         else None
                                     ),
                                 }
@@ -551,8 +580,12 @@ class CoursePublicService:
                 {
                     "id": lesson.id,
                     "title": lesson.title,
-                    "video_url": lesson.lesson_videos.video_url,
-                    "duration": lesson.lesson_videos.duration,
+                    "video_url": (
+                        lesson.lesson_videos.video_url if lesson.lesson_videos else None
+                    ),
+                    "duration": (
+                        lesson.lesson_videos.duration if lesson.lesson_videos else None
+                    ),
                 }
                 for lesson in lesson_previews
             ]
@@ -568,7 +601,7 @@ class CoursePublicService:
         cursor: str | None = None,  # dùng làm offset
         user: User | None = None,
     ):
-        now = datetime.now(timezone.utc)
+        now = get_now()
         offset = int(cursor) if cursor and cursor.isdigit() else 0
 
         # 1️⃣ Lấy dữ liệu thống kê để tính tag
@@ -665,7 +698,7 @@ class CoursePublicService:
                 tags.append("bán chạy nhất")
             if (c.rating_avg or 0) >= rating_cutoff:
                 tags.append("được yêu thích")
-            if c.created_at and c.created_at >= seven_days_ago:
+            if c.created_at and strip_tz(c.created_at) >= seven_days_ago:
                 tags.append("mới ra mắt")
 
             items.append(
@@ -694,9 +727,12 @@ class CoursePublicService:
         user: User,
     ):
         try:
+            # ===== Lấy khóa học =====
             course: Courses | None = await self.db.get(Courses, course_id)
             if course is None:
-                raise HTTPException(403, "Khóa học khong ton tai")
+                raise HTTPException(404, "Khóa học không tồn tại")
+
+            # ===== Kiểm tra đã đăng ký chưa =====
             course_enroll = await self.db.scalar(
                 select(CourseEnrollments).where(
                     CourseEnrollments.course_id == course_id,
@@ -704,32 +740,80 @@ class CoursePublicService:
                 )
             )
             if course_enroll is not None:
-                raise HTTPException(409, "Ban đã đăng ký khóa học này trước đó")
+                raise HTTPException(409, "Bạn đã đăng ký khóa học này trước đó")
+
+            # ===== Case 1: Giảng viên tự đăng ký khóa học của chính mình =====
             if course.instructor_id == user.id:
-                self.db.add(
-                    CourseEnrollments(
-                        course_id=course_id,
+                enroll = CourseEnrollments(
+                    course_id=course_id,
+                    user_id=user.id,
+                )
+                self.db.add(enroll)
+                await self.db.commit()
+
+                return {
+                    "message": "Giảng viên đã tự đăng ký học thành công (không tính doanh thu)"
+                }
+
+            # ===== Case 2: Khóa học miễn phí =====
+            if course.base_price == 0:
+                enroll = CourseEnrollments(
+                    course_id=course_id,
+                    user_id=user.id,
+                )
+                self.db.add(enroll)
+                await self.db.commit()
+
+                # =====================================================
+                # 🔔 SEND NOTIFICATION (student + instructor)
+                # =====================================================
+                notification_service = NotificationService(self.db)
+                roles = await AuthorizationService.get_list_role_in_user(user)
+
+                # Noti cho HỌC VIÊN
+                await notification_service.create_notification_async(
+                    NotificationCreateSchema(
                         user_id=user.id,
+                        roles=roles,
+                        title="Đăng ký khóa học thành công 🎉",
+                        content=f"Bạn đã đăng ký khóa học '{course.title}' (miễn phí).",
+                        url=f"/learning/{course.slug}",
+                        type="course",
+                        role_target=["USER"],
+                        metadata={"course_id": str(course.id)},
+                        action="open_url",
                     )
                 )
-                await self.db.commit()
+
+                # Noti cho GIẢNG VIÊN
+                await notification_service.create_notification_async(
+                    NotificationCreateSchema(
+                        user_id=course.instructor_id,
+                        roles=["LECTURER"],
+                        title=f"Học viên mới đăng ký khóa học '{course.title}' 🎉",
+                        content=f"{user.fullname} ({user.email}) vừa đăng ký khóa học miễn phí của bạn.",
+                        url=f"/instructor/courses/{course.id}",
+                        type="course",
+                        role_target=["LECTURER"],
+                        metadata={
+                            "course_id": str(course.id),
+                            "student_id": str(user.id),
+                        },
+                        action="open_url",
+                    )
+                )
+
                 return {"message": "Đăng ký thành công"}
 
-            if course.base_price == 0:
-                self.db.add(
-                    CourseEnrollments(
-                        course_id=course_id,
-                        user_id=user.id,
-                    )
-                )
-                await self.db.commit()
-                return {"message": "Đăng ký thành công"}
-            else:
-                raise
+            # ===== Case 3: Khóa học có phí → FE phải gọi checkout =====
+            raise HTTPException(402, "Khóa học có phí, vui lòng tiến hành thanh toán")
+
+        except HTTPException:
+            raise
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, f"Co loi xay ra {e}")
+            raise HTTPException(500, f"Đã xảy ra lỗi: {e}")
 
     async def check_user_enroll_course_async(self, course_id: uuid.UUID, user: User):
         try:

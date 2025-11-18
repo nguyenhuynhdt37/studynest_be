@@ -10,18 +10,6 @@ from app.services.admin.role import RoleService
 router = APIRouter(prefix="/admin/roles", tags=["ADMIN ROLES"])
 
 
-# ✅ Inject RoleService chuẩn
-def get_role_service(role_service: RoleService = Depends(RoleService)) -> RoleService:
-    return role_service
-
-
-# ✅ Inject RoleService chuẩn
-def get_authorization_service(
-    auth_service: AuthorizationService = Depends(AuthorizationService),
-) -> AuthorizationService:
-    return auth_service
-
-
 # ---------------- ROUTES ----------------
 @router.get("")
 async def get_roles(
@@ -30,8 +18,8 @@ async def get_roles(
     order: str = Query("desc"),
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
-    service: RoleService = Depends(get_role_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: RoleService = Depends(RoleService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.get_roles_async(search, sort_by, order, page, size)
@@ -40,8 +28,8 @@ async def get_roles(
 @router.post("", status_code=201)
 async def create_role(
     schema: CreateRole = Body(...),
-    service: RoleService = Depends(get_role_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: RoleService = Depends(RoleService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.create_role_async(schema)
@@ -50,8 +38,8 @@ async def create_role(
 @router.delete("/{role_id}")
 async def delete_role(
     role_id: uuid.UUID,
-    service: RoleService = Depends(get_role_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: RoleService = Depends(RoleService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.delete_role_async(role_id)
@@ -61,8 +49,8 @@ async def delete_role(
 async def update_role(
     role_id: uuid.UUID,
     schema: UpadteRole = Body(...),
-    service: RoleService = Depends(get_role_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: RoleService = Depends(RoleService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.update_role_async(role_id, schema)

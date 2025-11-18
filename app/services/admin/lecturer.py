@@ -19,7 +19,7 @@ from app.db.models.database import (
     Wallets,
 )
 from app.db.sesson import get_session
-from app.libs.formats.datetime import to_utc_naive
+from app.libs.formats.datetime import now as get_now, to_utc_naive
 
 
 class LecturerService:
@@ -293,9 +293,9 @@ class LecturerService:
                     detail="Không thể xóa tài khoản của chính mình",
                 )
 
-            user.deleted_at = to_utc_naive(datetime.utcnow())
+            user.deleted_at = await to_utc_naive(get_now())
             user.deleted_until = reason or "Không có lý do cụ thể"
-            user.update_at = to_utc_naive(datetime.utcnow())
+            user.update_at = await to_utc_naive(get_now())
 
             await self.db.commit()
             await self.db.refresh(user)
@@ -569,9 +569,9 @@ class LecturerService:
             lecturer.banned_until = (
                 None
                 if schema.is_block_permanently
-                else to_utc_naive(schema.banned_until or datetime.utcnow())
+                else to_utc_naive(schema.banned_until or get_now())
             )
-            lecturer.update_at = datetime.utcnow()
+            lecturer.update_at = get_now()
 
             await self.db.commit()
             await self.db.refresh(lecturer)
@@ -615,7 +615,7 @@ class LecturerService:
             lecturer.is_banned = False
             lecturer.banned_reason = None
             lecturer.banned_until = None
-            lecturer.update_at = datetime.utcnow()
+            lecturer.update_at = get_now()
 
             await self.db.commit()
             await self.db.refresh(lecturer)
@@ -705,8 +705,8 @@ class LecturerService:
                 insert(UserRoles).values(
                     user_id=user_id,
                     role_id=lecturer_role.id,
-                    create_at=to_utc_naive(datetime.utcnow()),
-                    update_at=to_utc_naive(datetime.utcnow()),
+                    create_at=await to_utc_naive(get_now()),
+                    update_at=await to_utc_naive(get_now()),
                 )
             )
             await self.db.commit()

@@ -4,7 +4,7 @@ import decimal
 import uuid
 
 from pgvector.sqlalchemy.vector import VECTOR
-from sqlalchemy import ARRAY, BigInteger, Boolean, CheckConstraint, DateTime, Double, Enum, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, REAL, SmallInteger, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import ARRAY, BigInteger, Boolean, CheckConstraint, Computed, Date, DateTime, Double, Enum, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, REAL, SmallInteger, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -33,6 +33,7 @@ class Categories(Base):
     parent_reverse: Mapped[list['Categories']] = relationship('Categories', remote_side=[parent_id], back_populates='parent')
     topics: Mapped[list['Topics']] = relationship('Topics', back_populates='category')
     courses: Mapped[list['Courses']] = relationship('Courses', back_populates='category')
+    discount_targets: Mapped[list['DiscountTargets']] = relationship('DiscountTargets', back_populates='category')
 
 
 class LearningFields(Base):
@@ -53,6 +54,26 @@ class LearningFields(Base):
     parent_reverse: Mapped[list['LearningFields']] = relationship('LearningFields', remote_side=[parent_id], back_populates='parent')
 
 
+class PlatformWallets(Base):
+    __tablename__ = 'platform_wallets'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='platform_wallets_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    balance: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('0'))
+    total_in: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('0'))
+    total_out: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('0'))
+    holding_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(14, 2), nullable=False, server_default=text('0'))
+    platform_fee_total: Mapped[decimal.Decimal] = mapped_column(Numeric(14, 2), nullable=False, server_default=text('0'))
+    currency: Mapped[Optional[str]] = mapped_column(Text, server_default=text("'VND'::text"))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    last_transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    platform_wallet_history: Mapped[list['PlatformWalletHistory']] = relationship('PlatformWalletHistory', back_populates='wallet')
+
+
 class Role(Base):
     __tablename__ = 'role'
     __table_args__ = (
@@ -70,11 +91,30 @@ class Role(Base):
     user_roles: Mapped[list['UserRoles']] = relationship('UserRoles', back_populates='role')
 
 
+class SupportedLanguages(Base):
+    __tablename__ = 'supported_languages'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='supported_languages_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[Optional[str]] = mapped_column(Text)
+    aliases: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text()))
+    runtime: Mapped[Optional[str]] = mapped_column(Text)
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('true'))
+    last_sync: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    lesson_codes: Mapped[list['LessonCodes']] = relationship('LessonCodes', back_populates='language')
+
+
 class User(Base):
     __tablename__ = 'user'
     __table_args__ = (
         PrimaryKeyConstraint('id', name='user_pk'),
         UniqueConstraint('email', name='user_unique'),
+        Index('user_embedding_idx', 'preferences_embedding'),
         {'schema': 'public'}
     )
 
@@ -94,7 +134,7 @@ class User(Base):
     create_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
     update_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
     preferences_str: Mapped[Optional[str]] = mapped_column(Text)
-    preferences_embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    preferences_embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     preferences_embedding_date_updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
     is_banned: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
     banned_reason: Mapped[Optional[str]] = mapped_column(Text)
@@ -108,10 +148,17 @@ class User(Base):
     instructor_description: Mapped[Optional[str]] = mapped_column(Text)
     evaluated_count: Mapped[Optional[int]] = mapped_column(BigInteger, server_default=text('0'))
 
+    discounts: Mapped[list['Discounts']] = relationship('Discounts', back_populates='user')
     email_verifications: Mapped[list['EmailVerifications']] = relationship('EmailVerifications', back_populates='user')
+    lecturer_upgrade_payments: Mapped[list['LecturerUpgradePayments']] = relationship('LecturerUpgradePayments', foreign_keys='[LecturerUpgradePayments.user_id]', back_populates='user')
+    lecturer_upgrade_payments_: Mapped[list['LecturerUpgradePayments']] = relationship('LecturerUpgradePayments', foreign_keys='[LecturerUpgradePayments.verified_by]', back_populates='user_')
     notifications: Mapped[list['Notifications']] = relationship('Notifications', back_populates='user')
+    platform_settings: Mapped[list['PlatformSettings']] = relationship('PlatformSettings', back_populates='user')
+    user_kyc: Mapped[list['UserKyc']] = relationship('UserKyc', foreign_keys='[UserKyc.reviewed_by]', back_populates='user')
+    user_kyc_: Mapped[Optional['UserKyc']] = relationship('UserKyc', uselist=False, foreign_keys='[UserKyc.user_id]', back_populates='user_')
     user_roles: Mapped[list['UserRoles']] = relationship('UserRoles', back_populates='user')
-    wallets: Mapped[Optional['Wallets']] = relationship('Wallets', uselist=False, back_populates='user')
+    wallets: Mapped['Wallets'] = relationship('Wallets', uselist=False, back_populates='user')
+    withdrawal_requests: Mapped[list['WithdrawalRequests']] = relationship('WithdrawalRequests', back_populates='lecturer')
     courses: Mapped[list['Courses']] = relationship('Courses', foreign_keys='[Courses.approved_by]', back_populates='user')
     courses_: Mapped[list['Courses']] = relationship('Courses', foreign_keys='[Courses.instructor_id]', back_populates='instructor')
     course_enrollments: Mapped[list['CourseEnrollments']] = relationship('CourseEnrollments', back_populates='user')
@@ -120,10 +167,53 @@ class User(Base):
     course_views: Mapped[list['CourseViews']] = relationship('CourseViews', back_populates='user')
     transactions: Mapped[list['Transactions']] = relationship('Transactions', back_populates='user')
     user_embedding_history: Mapped[list['UserEmbeddingHistory']] = relationship('UserEmbeddingHistory', back_populates='user')
-    lecturer_upgrade_payments: Mapped[list['LecturerUpgradePayments']] = relationship('LecturerUpgradePayments', foreign_keys='[LecturerUpgradePayments.user_id]', back_populates='user')
-    lecturer_upgrade_payments_: Mapped[list['LecturerUpgradePayments']] = relationship('LecturerUpgradePayments', foreign_keys='[LecturerUpgradePayments.verified_by]', back_populates='user_')
+    instructor_earnings: Mapped[list['InstructorEarnings']] = relationship('InstructorEarnings', back_populates='instructor')
+    purchase_items: Mapped[list['PurchaseItems']] = relationship('PurchaseItems', back_populates='user')
+    discount_history: Mapped[list['DiscountHistory']] = relationship('DiscountHistory', back_populates='user')
     lesson_active: Mapped[list['LessonActive']] = relationship('LessonActive', back_populates='user')
+    lesson_comments: Mapped[list['LessonComments']] = relationship('LessonComments', back_populates='user')
+    lesson_notes: Mapped[list['LessonNotes']] = relationship('LessonNotes', back_populates='user')
     lesson_progress: Mapped[list['LessonProgress']] = relationship('LessonProgress', back_populates='user')
+    refund_requests: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.instructor_id]', back_populates='instructor')
+    refund_requests_: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.resolved_by]', back_populates='user')
+    refund_requests1: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.user_id]', back_populates='user_')
+    lesson_comment_reactions: Mapped[list['LessonCommentReactions']] = relationship('LessonCommentReactions', back_populates='user')
+
+
+class Discounts(Base):
+    __tablename__ = 'discounts'
+    __table_args__ = (
+        CheckConstraint("applies_to = ANY (ARRAY['global'::text, 'course'::text, 'category'::text, 'specific'::text])", name='discounts_applies_to_check'),
+        CheckConstraint("created_role = ANY (ARRAY['ADMIN'::text, 'LECTURER'::text])", name='discounts_created_role_check'),
+        CheckConstraint("discount_type = ANY (ARRAY['percent'::text, 'fixed'::text])", name='discounts_discount_type_check'),
+    ForeignKeyConstraint(['created_by'], ['public.user.id'], name='discounts_created_by_fkey'),
+        PrimaryKeyConstraint('id', name='discounts_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_role: Mapped[str] = mapped_column(Text, nullable=False)
+    applies_to: Mapped[str] = mapped_column(Text, nullable=False)
+    discount_type: Mapped[str] = mapped_column(Text, nullable=False)
+    start_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    end_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    discount_code: Mapped[Optional[str]] = mapped_column(Text)
+    is_hidden: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
+    percent_value: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(5, 2))
+    fixed_value: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2))
+    usage_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    usage_count: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('0'))
+    per_user_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('true'))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+
+    user: Mapped['User'] = relationship('User', back_populates='discounts')
+    discount_targets: Mapped[list['DiscountTargets']] = relationship('DiscountTargets', back_populates='discount')
+    purchase_items: Mapped[list['PurchaseItems']] = relationship('PurchaseItems', back_populates='discount')
+    discount_history: Mapped[list['DiscountHistory']] = relationship('DiscountHistory', back_populates='discount')
 
 
 class EmailVerifications(Base):
@@ -143,6 +233,31 @@ class EmailVerifications(Base):
     user: Mapped[Optional['User']] = relationship('User', back_populates='email_verifications')
 
 
+class LecturerUpgradePayments(Base):
+    __tablename__ = 'lecturer_upgrade_payments'
+    __table_args__ = (
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lecturer_upgrade_payments_user_id_fkey'),
+    ForeignKeyConstraint(['verified_by'], ['public.user.id'], name='lecturer_upgrade_payments_verified_by_fkey'),
+        PrimaryKeyConstraint('id', name='lecturer_upgrade_payments_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    amount: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    payment_status: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'pending'::character varying"))
+    paid_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    verified_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    note: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+
+    user: Mapped['User'] = relationship('User', foreign_keys=[user_id], back_populates='lecturer_upgrade_payments')
+    user_: Mapped[Optional['User']] = relationship('User', foreign_keys=[verified_by], back_populates='lecturer_upgrade_payments_')
+
+
 class Notifications(Base):
     __tablename__ = 'notifications'
     __table_args__ = (
@@ -152,10 +267,9 @@ class Notifications(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    role_target: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     content: Mapped[Optional[str]] = mapped_column(Text)
     url: Mapped[Optional[str]] = mapped_column(Text)
     metadata_: Mapped[Optional[dict]] = mapped_column('metadata', JSONB, server_default=text("'{}'::jsonb"))
@@ -166,8 +280,64 @@ class Notifications(Base):
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
     action: Mapped[Optional[str]] = mapped_column(String(50))
+    role_target: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text()), server_default=text("'{}'::text[]"))
 
-    user: Mapped['User'] = relationship('User', back_populates='notifications')
+    user: Mapped[Optional['User']] = relationship('User', back_populates='notifications')
+
+
+class PlatformSettings(Base):
+    __tablename__ = 'platform_settings'
+    __table_args__ = (
+    ForeignKeyConstraint(['updated_by'], ['public.user.id'], name='platform_settings_updated_by_fkey'),
+        PrimaryKeyConstraint('id', name='platform_settings_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    platform_fee: Mapped[decimal.Decimal] = mapped_column(Numeric(5, 4), nullable=False, server_default=text('0.3000'))
+    hold_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('7'))
+    payout_min_balance: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('100000'))
+    payout_schedule: Mapped[str] = mapped_column(String(50), nullable=False, server_default=text("'mon-wed-fri'::character varying"))
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'VND'::character varying"))
+    allow_wallet_topup: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
+    allow_auto_withdraw: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    max_discounts_per_course: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('2'))
+    discount_max_percent: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('90'))
+    discount_min_price: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('1000'))
+    course_min_price: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('10000'))
+    course_max_price: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text('20000000'))
+    course_default_language: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'vi'::character varying"))
+    embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('3072'))
+    search_top_k: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('8'))
+    rag_max_chunks: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('50'))
+    max_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('5'))
+    lock_time_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('15'))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    instructor_fee: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(5, 4), Computed('((1)::numeric - platform_fee)', persisted=True))
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    user: Mapped[Optional['User']] = relationship('User', back_populates='platform_settings')
+
+
+class PlatformWalletHistory(Base):
+    __tablename__ = 'platform_wallet_history'
+    __table_args__ = (
+        CheckConstraint("type = ANY (ARRAY['in'::text, 'out'::text, 'hold'::text, 'release'::text, 'fee'::text])", name='platform_wallet_history_type_check'),
+    ForeignKeyConstraint(['wallet_id'], ['public.platform_wallets.id'], ondelete='CASCADE', name='platform_wallet_history_wallet_id_fkey'),
+        PrimaryKeyConstraint('id', name='platform_wallet_history_pkey'),
+        Index('idx_platform_wallet_history_created_at', 'created_at'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    wallet_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    amount: Mapped[decimal.Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    related_transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    note: Mapped[Optional[str]] = mapped_column(Text)
+
+    wallet: Mapped['PlatformWallets'] = relationship('PlatformWallets', back_populates='platform_wallet_history')
 
 
 class Topics(Base):
@@ -176,6 +346,7 @@ class Topics(Base):
     ForeignKeyConstraint(['category_id'], ['public.categories.id'], ondelete='CASCADE', name='topics_category_id_fkey'),
         PrimaryKeyConstraint('id', name='topics_pkey'),
         UniqueConstraint('slug', name='topics_slug_key'),
+        Index('topics_embedding_idx', 'embedding'),
         {'schema': 'public'}
     )
 
@@ -186,7 +357,7 @@ class Topics(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     order_index: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('1'))
     is_active: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('true'))
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
 
@@ -194,11 +365,42 @@ class Topics(Base):
     courses: Mapped[list['Courses']] = relationship('Courses', back_populates='topic')
 
 
+class UserKyc(Base):
+    __tablename__ = 'user_kyc'
+    __table_args__ = (
+    ForeignKeyConstraint(['reviewed_by'], ['public.user.id'], name='user_kyc_reviewed_by_fkey'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_kyc_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='user_kyc_pkey'),
+        UniqueConstraint('user_id', name='user_kyc_user_id_key'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255))
+    id_number: Mapped[Optional[str]] = mapped_column(String(50))
+    dob: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    address: Mapped[Optional[str]] = mapped_column(Text)
+    country: Mapped[Optional[str]] = mapped_column(String(100))
+    document_front_url: Mapped[Optional[str]] = mapped_column(Text)
+    document_back_url: Mapped[Optional[str]] = mapped_column(Text)
+    selfie_url: Mapped[Optional[str]] = mapped_column(Text)
+    verification_status: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'pending'::character varying"))
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    reviewed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+
+    user: Mapped[Optional['User']] = relationship('User', foreign_keys=[reviewed_by], back_populates='user_kyc')
+    user_: Mapped[Optional['User']] = relationship('User', foreign_keys=[user_id], back_populates='user_kyc_')
+
+
 class UserRoles(Base):
     __tablename__ = 'user_roles'
     __table_args__ = (
     ForeignKeyConstraint(['role_id'], ['public.role.id'], name='user_roles_role_fk'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='user_roles_user_fk'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_roles_user_fk'),
         PrimaryKeyConstraint('id', name='user_roles_pk'),
         {'schema': 'public'}
     )
@@ -219,18 +421,46 @@ class Wallets(Base):
     ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='wallets_user_id_fkey'),
         PrimaryKeyConstraint('id', name='wallets_pkey'),
         UniqueConstraint('user_id', name='wallets_user_id_key'),
+        {'comment': 'Ví người dùng (1 user = 1 ví)', 'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2), server_default=text('0'), comment='Số dư hiện tại của ví')
+    total_in: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2), server_default=text('0'), comment='Tổng tiền nạp vào')
+    total_out: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2), server_default=text('0'), comment='Tổng tiền rút ra')
+    currency: Mapped[Optional[str]] = mapped_column(String(10), server_default=text("'VND'::character varying"), comment='Đơn vị tiền tệ (VND/USD)')
+    is_locked: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'), comment='Khóa ví khi nghi ngờ gian lận')
+    last_transaction_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    kyc_verified: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
+
+    user: Mapped['User'] = relationship('User', back_populates='wallets')
+
+
+class WithdrawalRequests(Base):
+    __tablename__ = 'withdrawal_requests'
+    __table_args__ = (
+        CheckConstraint('amount > 0::numeric', name='withdrawal_requests_amount_check'),
+        CheckConstraint("status::text = ANY (ARRAY['pending'::character varying, 'approved'::character varying, 'rejected'::character varying, 'failed'::character varying, 'completed'::character varying]::text[])", name='withdrawal_requests_status_check'),
+    ForeignKeyConstraint(['lecturer_id'], ['public.user.id'], name='withdrawal_requests_lecturer_id_fkey'),
+        PrimaryKeyConstraint('id', name='withdrawal_requests_pkey'),
         {'schema': 'public'}
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
-    balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2), server_default=text('0'))
-    total_in: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2), server_default=text('0'))
-    total_out: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2), server_default=text('0'))
-    last_transaction_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    lecturer_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    amount: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'USD'::character varying"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    paypal_batch_id: Mapped[Optional[str]] = mapped_column(Text)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    requested_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+    approved_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    rejected_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
 
-    user: Mapped[Optional['User']] = relationship('User', back_populates='wallets')
+    lecturer: Mapped['User'] = relationship('User', back_populates='withdrawal_requests')
 
 
 class Courses(Base):
@@ -243,6 +473,7 @@ class Courses(Base):
     ForeignKeyConstraint(['topic_id'], ['public.topics.id'], ondelete='SET NULL', name='courses_topic_id_fkey'),
         PrimaryKeyConstraint('id', name='courses_pkey'),
         UniqueConstraint('slug', name='courses_slug_key'),
+        Index('courses_embedding_idx', 'embedding'),
         {'schema': 'public'}
     )
 
@@ -263,7 +494,7 @@ class Courses(Base):
     rating_avg: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(3, 2), server_default=text('0.00'))
     rating_count: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('0'))
     search_tsv: Mapped[Optional[Any]] = mapped_column(TSVECTOR)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
     deleted_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
@@ -292,9 +523,11 @@ class Courses(Base):
     course_reviews: Mapped[list['CourseReviews']] = relationship('CourseReviews', back_populates='course')
     course_sections: Mapped[list['CourseSections']] = relationship('CourseSections', back_populates='course')
     course_views: Mapped[list['CourseViews']] = relationship('CourseViews', back_populates='course')
+    discount_targets: Mapped[list['DiscountTargets']] = relationship('DiscountTargets', back_populates='course')
     transactions: Mapped[list['Transactions']] = relationship('Transactions', back_populates='course')
     user_embedding_history: Mapped[list['UserEmbeddingHistory']] = relationship('UserEmbeddingHistory', back_populates='course')
     lessons: Mapped[list['Lessons']] = relationship('Lessons', back_populates='course')
+    purchase_items: Mapped[list['PurchaseItems']] = relationship('PurchaseItems', back_populates='course')
     lesson_active: Mapped[list['LessonActive']] = relationship('LessonActive', back_populates='course')
     lesson_progress: Mapped[list['LessonProgress']] = relationship('LessonProgress', back_populates='course')
     lesson_quizzes: Mapped[list['LessonQuizzes']] = relationship('LessonQuizzes', back_populates='course')
@@ -345,6 +578,7 @@ class CourseReviews(Base):
     ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_reviews_course_id_fkey'),
     ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_reviews_user_id_fkey'),
         PrimaryKeyConstraint('id', name='course_reviews_pkey'),
+        Index('course_reviews_embedding_idx', 'embedding'),
         {'schema': 'public'}
     )
 
@@ -353,7 +587,7 @@ class CourseReviews(Base):
     course_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     rating: Mapped[Optional[int]] = mapped_column(SmallInteger)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     sentiment: Mapped[Optional[str]] = mapped_column(String(20))
     topics: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text()))
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
@@ -401,32 +635,64 @@ class CourseViews(Base):
     user: Mapped[Optional['User']] = relationship('User', back_populates='course_views')
 
 
-class Transactions(Base):
-    __tablename__ = 'transactions'
+class DiscountTargets(Base):
+    __tablename__ = 'discount_targets'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='transactions_courses_fk'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='transactions_user_id_fkey'),
-        PrimaryKeyConstraint('id', name='transactions_pkey'),
+        CheckConstraint('course_id IS NOT NULL OR category_id IS NOT NULL', name='discount_targets_check'),
+    ForeignKeyConstraint(['category_id'], ['public.categories.id'], ondelete='CASCADE', name='discount_targets_category_id_fkey'),
+    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='discount_targets_course_id_fkey'),
+    ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], ondelete='CASCADE', name='discount_targets_discount_id_fkey'),
+        PrimaryKeyConstraint('id', name='discount_targets_pkey'),
         {'schema': 'public'}
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    discount_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    course_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    category_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    category: Mapped[Optional['Categories']] = relationship('Categories', back_populates='discount_targets')
+    course: Mapped[Optional['Courses']] = relationship('Courses', back_populates='discount_targets')
+    discount: Mapped['Discounts'] = relationship('Discounts', back_populates='discount_targets')
+
+
+class Transactions(Base):
+    __tablename__ = 'transactions'
+    __table_args__ = (
+        CheckConstraint('amount > 0::numeric', name='transactions_amount_positive'),
+        CheckConstraint('amount > 0::numeric', name='transactions_amount_check'),
+    ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='transactions_courses_fk'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='transactions_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='transactions_pkey'),
+        Index('idx_transactions_user_date', 'user_id', 'created_at'),
+        {'comment': 'Lịch sử giao dịch (mua khóa học, rút ví, thanh toán...)',
+     'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     amount: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    course_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    ref_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, comment='Liên kết đến bảng khác (purchases, lecturer_upgrade_payments)')
     currency: Mapped[Optional[str]] = mapped_column(String(10), server_default=text("'VND'::character varying"))
+    direction: Mapped[Optional[str]] = mapped_column(String(10), server_default=text("'in'::character varying"), comment='in = nạp, out = rút')
     method: Mapped[Optional[str]] = mapped_column(String(50))
-    status: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'pending'::character varying"))
+    gateway: Mapped[Optional[str]] = mapped_column(String(20), comment='Cổng thanh toán: PayPal, MoMo...')
+    order_id: Mapped[Optional[str]] = mapped_column(String(100), comment='Mã đơn hàng từ PayPal/MoMo')
+    status: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'pending'::character varying"), comment='pending / completed / failed / refunded')
     transaction_code: Mapped[Optional[str]] = mapped_column(String(100))
     description: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
     confirmed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
-    course_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    return_pathname: Mapped[Optional[str]] = mapped_column(Text)
+    return_origin: Mapped[Optional[str]] = mapped_column(Text)
 
     course: Mapped[Optional['Courses']] = relationship('Courses', back_populates='transactions')
-    user: Mapped[Optional['User']] = relationship('User', back_populates='transactions')
-    lecturer_upgrade_payments: Mapped[list['LecturerUpgradePayments']] = relationship('LecturerUpgradePayments', back_populates='transaction')
+    user: Mapped['User'] = relationship('User', back_populates='transactions')
+    instructor_earnings: Mapped[list['InstructorEarnings']] = relationship('InstructorEarnings', back_populates='transaction')
+    purchase_items: Mapped[list['PurchaseItems']] = relationship('PurchaseItems', back_populates='transaction')
 
 
 class UserEmbeddingHistory(Base):
@@ -435,6 +701,7 @@ class UserEmbeddingHistory(Base):
     ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='user_embedding_history_course_id_fkey'),
     ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_embedding_history_user_id_fkey'),
         PrimaryKeyConstraint('id', name='user_embedding_history_pkey'),
+        Index('user_embedding_history_idx', 'embedding'),
         {'schema': 'public'}
     )
 
@@ -442,7 +709,7 @@ class UserEmbeddingHistory(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     course_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     interaction_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     lambda_: Mapped[Optional[float]] = mapped_column(Double(53))
     similarity: Mapped[Optional[float]] = mapped_column(Double(53))
     decay: Mapped[Optional[float]] = mapped_column(Double(53))
@@ -452,31 +719,31 @@ class UserEmbeddingHistory(Base):
     user: Mapped['User'] = relationship('User', back_populates='user_embedding_history')
 
 
-class LecturerUpgradePayments(Base):
-    __tablename__ = 'lecturer_upgrade_payments'
+class InstructorEarnings(Base):
+    __tablename__ = 'instructor_earnings'
     __table_args__ = (
-    ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='SET NULL', name='lecturer_upgrade_payments_transaction_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lecturer_upgrade_payments_user_id_fkey'),
-    ForeignKeyConstraint(['verified_by'], ['public.user.id'], name='lecturer_upgrade_payments_verified_by_fkey'),
-        PrimaryKeyConstraint('id', name='lecturer_upgrade_payments_pkey'),
+        CheckConstraint("status::text = ANY (ARRAY['holding'::character varying, 'pending'::character varying, 'paid'::character varying, 'refunded'::character varying]::text[])", name='instructor_earnings_status_check'),
+    ForeignKeyConstraint(['instructor_id'], ['public.user.id'], ondelete='CASCADE', name='instructor_earnings_instructor_id_fkey'),
+    ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='CASCADE', name='instructor_earnings_transaction_id_fkey'),
+        PrimaryKeyConstraint('id', name='instructor_earnings_pkey'),
         {'schema': 'public'}
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    amount: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
-    payment_status: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'pending'::character varying"))
-    paid_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-    verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
-    verified_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-    note: Mapped[Optional[str]] = mapped_column(Text)
+    transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    instructor_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    amount_instructor: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    amount_platform: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'holding'::character varying"))
+    hold_until: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    available_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    paid_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    payout_reference: Mapped[Optional[str]] = mapped_column(String(100))
+    purchase_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
 
-    transaction: Mapped[Optional['Transactions']] = relationship('Transactions', back_populates='lecturer_upgrade_payments')
-    user: Mapped['User'] = relationship('User', foreign_keys=[user_id], back_populates='lecturer_upgrade_payments')
-    user_: Mapped[Optional['User']] = relationship('User', foreign_keys=[verified_by], back_populates='lecturer_upgrade_payments_')
+    instructor: Mapped['User'] = relationship('User', back_populates='instructor_earnings')
+    transaction: Mapped['Transactions'] = relationship('Transactions', back_populates='instructor_earnings')
 
 
 class Lessons(Base):
@@ -485,19 +752,20 @@ class Lessons(Base):
     ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='lessons_courses_fk'),
     ForeignKeyConstraint(['section_id'], ['public.course_sections.id'], ondelete='CASCADE', name='lessons_section_id_fkey'),
         PrimaryKeyConstraint('id', name='lessons_pkey'),
+        Index('lessons_embedding_idx', 'embedding'),
         {'schema': 'public'}
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    lesson_type: Mapped[str] = mapped_column(Enum('video', 'article', 'quiz', 'coding', 'assignment', 'resource', name='lesson_type_enum'), nullable=False)
+    lesson_type: Mapped[str] = mapped_column(Enum('video', 'article', 'quiz', 'code', 'assignment', 'resource', name='lesson_type_enum'), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     section_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     description: Mapped[Optional[str]] = mapped_column(Text)
     prerequisites: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text()))
     outcomes: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text()))
     is_preview: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     content_tokens: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
@@ -507,12 +775,70 @@ class Lessons(Base):
     section: Mapped[Optional['CourseSections']] = relationship('CourseSections', back_populates='lessons')
     lesson_active: Mapped[list['LessonActive']] = relationship('LessonActive', back_populates='lesson')
     lesson_chunks: Mapped[list['LessonChunks']] = relationship('LessonChunks', back_populates='lesson')
+    lesson_codes: Mapped[list['LessonCodes']] = relationship('LessonCodes', back_populates='lesson')
+    lesson_comments: Mapped[list['LessonComments']] = relationship('LessonComments', back_populates='lesson')
+    lesson_notes: Mapped[list['LessonNotes']] = relationship('LessonNotes', back_populates='lesson')
     lesson_progress: Mapped[list['LessonProgress']] = relationship('LessonProgress', back_populates='lesson')
     lesson_quizzes: Mapped[list['LessonQuizzes']] = relationship('LessonQuizzes', back_populates='lesson')
     lesson_resources: Mapped[list['LessonResources']] = relationship('LessonResources', back_populates='lesson')
+    resource_chunks: Mapped[list['ResourceChunks']] = relationship('ResourceChunks', back_populates='lesson')
     # 🧩 Auto relationship (parent → child): LessonVideos
     lesson_videos: Mapped[Optional['LessonVideos']] = relationship(
         'LessonVideos', back_populates='lessons', uselist=False)
+
+
+class PurchaseItems(Base):
+    __tablename__ = 'purchase_items'
+    __table_args__ = (
+        CheckConstraint("status = ANY (ARRAY['completed'::text, 'refunded'::text, 'cancelled'::text])", name='purchase_items_status_check'),
+    ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='purchase_items_course_id_fkey'),
+    ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], name='purchase_items_discount_id_fkey'),
+    ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='CASCADE', name='purchase_items_transaction_id_fkey'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='purchase_items_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='purchase_items_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    course_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    original_price: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    discounted_price: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'completed'::text"))
+    discount_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(12, 2))
+    course_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+
+    course: Mapped['Courses'] = relationship('Courses', back_populates='purchase_items')
+    discount: Mapped[Optional['Discounts']] = relationship('Discounts', back_populates='purchase_items')
+    transaction: Mapped['Transactions'] = relationship('Transactions', back_populates='purchase_items')
+    user: Mapped['User'] = relationship('User', back_populates='purchase_items')
+    discount_history: Mapped[list['DiscountHistory']] = relationship('DiscountHistory', back_populates='purchase_item')
+    refund_requests: Mapped[list['RefundRequests']] = relationship('RefundRequests', back_populates='purchase_item')
+
+
+class DiscountHistory(Base):
+    __tablename__ = 'discount_history'
+    __table_args__ = (
+    ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], name='discount_history_discount_id_fkey'),
+    ForeignKeyConstraint(['purchase_item_id'], ['public.purchase_items.id'], ondelete='CASCADE', name='discount_history_purchase_items_fk'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='discount_history_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='discount_history_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    purchase_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    discount_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    discounted_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+
+    discount: Mapped['Discounts'] = relationship('Discounts', back_populates='discount_history')
+    purchase_item: Mapped['PurchaseItems'] = relationship('PurchaseItems', back_populates='discount_history')
+    user: Mapped['User'] = relationship('User', back_populates='discount_history')
 
 
 class LessonActive(Base):
@@ -540,6 +866,7 @@ class LessonChunks(Base):
     __table_args__ = (
     ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_chunks_lesson_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_chunks_pkey'),
+        Index('lesson_chunks_embedding_idx', 'embedding'),
         {'schema': 'public'}
     )
 
@@ -547,11 +874,99 @@ class LessonChunks(Base):
     lesson_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     chunk_index: Mapped[Optional[int]] = mapped_column(Integer)
     text_: Mapped[Optional[str]] = mapped_column('text', Text)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     token_count: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
 
     lesson: Mapped[Optional['Lessons']] = relationship('Lessons', back_populates='lesson_chunks')
+
+
+class LessonCodes(Base):
+    __tablename__ = 'lesson_codes'
+    __table_args__ = (
+        CheckConstraint("difficulty = ANY (ARRAY['easy'::text, 'medium'::text, 'hard'::text])", name='lesson_codes_difficulty_check'),
+    ForeignKeyConstraint(['language_id'], ['public.supported_languages.id'], name='lesson_codes_language_id_fkey'),
+    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_codes_lesson_id_fkey'),
+        PrimaryKeyConstraint('id', name='lesson_codes_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    lesson_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    language_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    difficulty: Mapped[Optional[str]] = mapped_column(Text, server_default=text("'medium'::text"))
+    time_limit: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('2'))
+    memory_limit: Mapped[Optional[int]] = mapped_column(BigInteger, server_default=text('256000000'))
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('true'))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    language: Mapped[Optional['SupportedLanguages']] = relationship('SupportedLanguages', back_populates='lesson_codes')
+    lesson: Mapped['Lessons'] = relationship('Lessons', back_populates='lesson_codes')
+    lesson_code_files: Mapped[list['LessonCodeFiles']] = relationship('LessonCodeFiles', back_populates='lesson_code')
+    lesson_code_testcases: Mapped[list['LessonCodeTestcases']] = relationship('LessonCodeTestcases', back_populates='lesson_code')
+
+
+class LessonComments(Base):
+    __tablename__ = 'lesson_comments'
+    __table_args__ = (
+        CheckConstraint('depth >= 0', name='lesson_comments_depth_check'),
+        CheckConstraint("status::text = ANY (ARRAY['visible'::character varying, 'hidden'::character varying, 'deleted'::character varying]::text[])", name='lesson_comments_status_check'),
+    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_comments_lesson_id_fkey'),
+    ForeignKeyConstraint(['parent_id'], ['public.lesson_comments.id'], ondelete='CASCADE', name='lesson_comments_parent_id_fkey'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_comments_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='lesson_comments_pkey'),
+        Index('idx_lc_lesson_created', 'lesson_id', 'created_at'),
+        Index('idx_lc_parent', 'parent_id'),
+        Index('idx_lc_status', 'status'),
+        Index('idx_lc_user', 'user_id'),
+        Index('idx_lesson_comments_root_id', 'root_id'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    lesson_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    status: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'visible'::character varying"))
+    depth: Mapped[Optional[int]] = mapped_column(SmallInteger, server_default=text('0'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    root_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    lesson: Mapped['Lessons'] = relationship('Lessons', back_populates='lesson_comments')
+    parent: Mapped[Optional['LessonComments']] = relationship('LessonComments', remote_side=[id], back_populates='parent_reverse')
+    parent_reverse: Mapped[list['LessonComments']] = relationship('LessonComments', remote_side=[parent_id], back_populates='parent')
+    user: Mapped['User'] = relationship('User', back_populates='lesson_comments')
+    lesson_comment_reactions: Mapped[list['LessonCommentReactions']] = relationship('LessonCommentReactions', back_populates='comment')
+
+
+class LessonNotes(Base):
+    __tablename__ = 'lesson_notes'
+    __table_args__ = (
+        CheckConstraint('time_seconds >= 0', name='lesson_notes_time_seconds_check'),
+    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_notes_lesson_id_fkey'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_notes_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='lesson_notes_pkey'),
+        Index('idx_lesson_notes_lesson_time', 'lesson_id', 'time_seconds'),
+        Index('idx_lesson_notes_user', 'user_id'),
+        Index('lesson_notes_embedding_idx', 'embedding'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    lesson_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    time_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    lesson: Mapped['Lessons'] = relationship('Lessons', back_populates='lesson_notes')
+    user: Mapped['User'] = relationship('User', back_populates='lesson_notes')
 
 
 class LessonProgress(Base):
@@ -587,6 +1002,7 @@ class LessonQuizzes(Base):
     ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_quizzes_lesson_id_fkey'),
     ForeignKeyConstraint(['section_id'], ['public.course_sections.id'], ondelete='CASCADE', name='lesson_quizzes_section_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_quizzes_pkey'),
+        Index('lesson_quizzes_embedding_idx', 'embedding'),
         {'schema': 'public'}
     )
 
@@ -598,7 +1014,7 @@ class LessonQuizzes(Base):
     explanation: Mapped[Optional[str]] = mapped_column(Text)
     difficulty_level: Mapped[Optional[int]] = mapped_column(SmallInteger, server_default=text('1'))
     created_by: Mapped[Optional[str]] = mapped_column(String(20), server_default=text("'ai'::character varying"))
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(3072))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
 
     course: Mapped[Optional['Courses']] = relationship('Courses', back_populates='lesson_quizzes')
@@ -624,14 +1040,16 @@ class LessonResources(Base):
     mime_type: Mapped[Optional[str]] = mapped_column(String)
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    embed_status: Mapped[Optional[str]] = mapped_column(Text, server_default=text("'idle'::text"))
 
     lesson: Mapped[Optional['Lessons']] = relationship('Lessons', back_populates='lesson_resources')
+    resource_chunks: Mapped[list['ResourceChunks']] = relationship('ResourceChunks', back_populates='resource')
 
 
 class LessonVideos(Base):
     __tablename__ = 'lesson_videos'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], name='lesson_videos_lessons_fk'),
+    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_videos_lessons_fk'),
         PrimaryKeyConstraint('lesson_id', name='lesson_videos_pkey'),
         {'schema': 'public'}
     )
@@ -641,9 +1059,110 @@ class LessonVideos(Base):
     transcript: Mapped[Optional[str]] = mapped_column(Text)
     duration: Mapped[Optional[float]] = mapped_column(Double(53), server_default=text('0'))
     file_id: Mapped[Optional[str]] = mapped_column(String)
+    source_type: Mapped[Optional[str]] = mapped_column(String, server_default=text("'upload_drive'::character varying"))
     # 🧩 Auto relationship (child → parent): Lessons
     lessons: Mapped['Lessons'] = relationship(
         'Lessons', back_populates='lesson_videos', uselist=False)
+
+
+class RefundRequests(Base):
+    __tablename__ = 'refund_requests'
+    __table_args__ = (
+        CheckConstraint("status::text = ANY (ARRAY['requested'::character varying, 'instructor_approved'::character varying, 'instructor_rejected'::character varying, 'admin_approved'::character varying, 'admin_rejected'::character varying, 'refunded'::character varying]::text[])", name='refund_requests_status_check'),
+    ForeignKeyConstraint(['instructor_id'], ['public.user.id'], name='refund_requests_instructor_id_fkey'),
+    ForeignKeyConstraint(['purchase_item_id'], ['public.purchase_items.id'], ondelete='CASCADE', name='refund_requests_purchase_item_id_fkey'),
+    ForeignKeyConstraint(['resolved_by'], ['public.user.id'], name='refund_requests_resolved_by_fkey'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='refund_requests_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='refund_requests_pkey'),
+        Index('idx_refund_requests_instructor', 'instructor_id'),
+        Index('idx_refund_requests_purchase_item', 'purchase_item_id'),
+        Index('idx_refund_requests_status', 'status'),
+        Index('idx_refund_requests_user', 'user_id'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    purchase_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    instructor_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'requested'::character varying"))
+    refund_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    resolved_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    instructor_comment: Mapped[Optional[str]] = mapped_column(Text)
+    admin_comment: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
+    instructor_reviewed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    admin_reviewed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    resolved_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+
+    instructor: Mapped['User'] = relationship('User', foreign_keys=[instructor_id], back_populates='refund_requests')
+    purchase_item: Mapped['PurchaseItems'] = relationship('PurchaseItems', back_populates='refund_requests')
+    user: Mapped[Optional['User']] = relationship('User', foreign_keys=[resolved_by], back_populates='refund_requests_')
+    user_: Mapped['User'] = relationship('User', foreign_keys=[user_id], back_populates='refund_requests1')
+
+
+class LessonCodeFiles(Base):
+    __tablename__ = 'lesson_code_files'
+    __table_args__ = (
+    ForeignKeyConstraint(['lesson_code_id'], ['public.lesson_codes.id'], ondelete='CASCADE', name='lesson_code_files_lesson_code_id_fkey'),
+        PrimaryKeyConstraint('id', name='lesson_code_files_pkey'),
+        UniqueConstraint('lesson_code_id', 'user_id', 'filename', 'role', name='lesson_code_files_lesson_code_id_user_id_filename_role_key'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    lesson_code_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Enum('solution', 'starter', 'user', name='code_file_role'), nullable=False, server_default=text("'solution'::code_file_role"), comment='Phân loại file: \n- solution = code chuẩn của giảng viên để verify\n- starter = code khung cho học viên ban đầu\n- user = code học viên đang sửa')
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    is_main: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+    is_pass: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
+
+    lesson_code: Mapped['LessonCodes'] = relationship('LessonCodes', back_populates='lesson_code_files')
+
+
+class LessonCodeTestcases(Base):
+    __tablename__ = 'lesson_code_testcases'
+    __table_args__ = (
+    ForeignKeyConstraint(['lesson_code_id'], ['public.lesson_codes.id'], ondelete='CASCADE', name='lesson_code_testcases_lesson_code_id_fkey'),
+        PrimaryKeyConstraint('id', name='lesson_code_testcases_pkey'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    lesson_code_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    input: Mapped[Optional[str]] = mapped_column(Text)
+    expected_output: Mapped[Optional[str]] = mapped_column(Text)
+    is_sample: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
+    order_index: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('0'))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    lesson_code: Mapped['LessonCodes'] = relationship('LessonCodes', back_populates='lesson_code_testcases')
+
+
+class LessonCommentReactions(Base):
+    __tablename__ = 'lesson_comment_reactions'
+    __table_args__ = (
+    ForeignKeyConstraint(['comment_id'], ['public.lesson_comments.id'], ondelete='CASCADE', name='lesson_comment_reactions_comment_id_fkey'),
+    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_comment_reactions_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='lesson_comment_reactions_pkey'),
+        UniqueConstraint('comment_id', 'user_id', name='lesson_comment_reactions_comment_id_user_id_key'),
+        Index('idx_lcr_comment', 'comment_id'),
+        Index('idx_lcr_user', 'user_id'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    comment_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    comment: Mapped['LessonComments'] = relationship('LessonComments', back_populates='lesson_comment_reactions')
+    user: Mapped['User'] = relationship('User', back_populates='lesson_comment_reactions')
 
 
 class LessonQuizOptions(Base):
@@ -663,6 +1182,31 @@ class LessonQuizOptions(Base):
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('now()'))
 
     quiz: Mapped[Optional['LessonQuizzes']] = relationship('LessonQuizzes', back_populates='lesson_quiz_options')
+
+
+class ResourceChunks(Base):
+    __tablename__ = 'resource_chunks'
+    __table_args__ = (
+    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='resource_chunks_lesson_id_fkey'),
+    ForeignKeyConstraint(['resource_id'], ['public.lesson_resources.id'], ondelete='CASCADE', name='resource_chunks_resource_id_fkey'),
+        PrimaryKeyConstraint('id', name='resource_chunks_pkey'),
+        Index('idx_resource_chunks_embedding_hnsw', 'embedding'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    lesson_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    resource_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    chunk_type: Mapped[Optional[str]] = mapped_column(Text, server_default=text("'pdf'::text"))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
+    token_count: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('0'))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    lesson: Mapped[Optional['Lessons']] = relationship('Lessons', back_populates='resource_chunks')
+    resource: Mapped[Optional['LessonResources']] = relationship('LessonResources', back_populates='resource_chunks')
 
 
 # === AUTO FIX SUMMARY ===

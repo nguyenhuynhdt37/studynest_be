@@ -9,25 +9,11 @@ from app.services.admin.category import CategoryService
 router = APIRouter(prefix="/admin/categories", tags=["ADMIN CATEGORIES"])
 
 
-# ✅ Inject CategoryService chuẩn
-def get_category_service(
-    category_service: CategoryService = Depends(CategoryService),
-) -> CategoryService:
-    return category_service
-
-
-# ✅ Inject RoleService chuẩn
-def get_authorization_service(
-    auth_service: AuthorizationService = Depends(AuthorizationService),
-) -> AuthorizationService:
-    return auth_service
-
-
 # ---------------- ROUTES ----------------
 @router.get("")
 async def get_categories_flat(
-    service: CategoryService = Depends(get_category_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: CategoryService = Depends(CategoryService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
     page: int = 1,
     page_size: int = 20,
     search: str | None = None,
@@ -50,8 +36,8 @@ async def get_categories_flat(
 
 @router.get("/two_level")
 async def get_parent_and_second_level_categories(
-    service: CategoryService = Depends(get_category_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: CategoryService = Depends(CategoryService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.get_parent_and_second_level_categories()
@@ -61,8 +47,8 @@ async def get_parent_and_second_level_categories(
 async def update_category(
     category_id: uuid.UUID,
     schema: UpdateCategory,
-    service: CategoryService = Depends(get_category_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: CategoryService = Depends(CategoryService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.update_category_async(category_id, schema)
@@ -71,8 +57,8 @@ async def update_category(
 @router.get("/{category_id}/last_order_index_same_level")
 async def get_last_index(
     category_id: uuid.UUID,
-    service: CategoryService = Depends(get_category_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: CategoryService = Depends(CategoryService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.get_last_order_index_same_level_async(category_id)
@@ -81,8 +67,8 @@ async def get_last_index(
 @router.delete("/{category_id}")
 async def delete_category(
     category_id: uuid.UUID,
-    service: CategoryService = Depends(get_category_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: CategoryService = Depends(CategoryService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.delete_category_async(category_id)
@@ -90,8 +76,8 @@ async def delete_category(
 
 @router.post("")
 async def create_category(
-    service: CategoryService = Depends(get_category_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: CategoryService = Depends(CategoryService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
     schema: CreateCategory = Body(),
 ):
     await authorization.require_role(["ADMIN"])

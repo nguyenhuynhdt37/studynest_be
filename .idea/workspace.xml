@@ -5,46 +5,67 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="08b77a03-4dc0-4e72-9d9b-1391446198c1" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/codeStyles/codeStyleConfig.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/api/v1/admin/role.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/schemas/role.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/scripts/seed_roles.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/scripts/seed_users_with_role.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/services/admin/role.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/services/user/learning.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/backend.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/backend.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/material_theme_project_new.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/material_theme_project_new.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/deps.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/v1/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/auth.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/dataSources.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/admin/category.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/admin/category.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/admin/lecturer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/admin/lecturer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/admin/role.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/admin/role.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/admin/topic.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/admin/topic.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/admin/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/admin/user.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/auth.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/chat/admin/topic.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/chat/admin/topic.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/chat/lecturer/course.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/chat/lecturer/course.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/lecturer/chapter.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/lecturer/chapter.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/lecturer/courses.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/lecturer/courses.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/lecturer/lesson.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/lecturer/lesson.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/api/v1/user/category.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/user/category.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/user/courses.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/user/courses.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/user/favorites.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/user/favorites.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/v1/user/learning.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/user/learning.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/api/v1/user/learning_fields.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/v1/user/learning_fields.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/core/config.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/core/email_utils.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/core/deps.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/core/deps.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/core/embedding.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/core/embedding.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/core/llm.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/core/llm.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/core/security.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/core/security.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/core/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/core/settings.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/db/models/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/db/models/database.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/db/sesson.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/db/sesson.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/libs/formats/datetime.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/libs/formats/datetime.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/repositories/auth.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/repositories/mailer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/repositories/user/category.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/repositories/user/learning_fields.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/schemas/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/schemas/user.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/schemas/lecturer/chapter.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/schemas/lecturer/chapter.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/schemas/lecturer/lesson.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/schemas/lecturer/lesson.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/schemas/user/learning.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/schemas/user/learning.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/admin/category.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/admin/category.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/admin/lecturer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/admin/lecturer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/admin/topic.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/admin/topic.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/admin/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/admin/user.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/chat/admin/topic.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/chat/admin/topic.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/chat/lecturer/course.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/chat/lecturer/course.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/lecturer/chapter.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/lecturer/chapter.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/lecturer/course.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/lecturer/course.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/lecturer/lesson.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/lecturer/lesson.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/shares/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/shares/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/shares/google_driver.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/shares/google_driver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/shares/mailer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/shares/mailer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/shares/youtube_uploader.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/shares/youtube_uploader.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/user/category.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/user/category.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/user/courses.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/user/courses.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/user/favorites.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/user/favorites.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/user/learning.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/user/learning.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/user/learning_fields.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/user/learning_fields.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/readme.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="DatabaseLocalColorSettings">
+    <colors>
+      <entry key="c38fab76-e584-49c7-a8bd-667b18435f2f" value="Blue" />
+    </colors>
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
@@ -93,12 +114,23 @@
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
     &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
     &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;reference.settings.ide.settings.uml&quot;,
     &quot;settings.editor.splitter.proportion&quot;: &quot;0.1746109&quot;,
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  },
+  &quot;keyToStringList&quot;: {
+    &quot;DatabaseDriversLRU&quot;: [
+      &quot;postgresql&quot;
+    ]
   }
 }</component>
   <component name="RunManager" selected="Docker.docker-compose.yml.db: Compose Deployment">
+    <configuration name="c38fab76-e584-49c7-a8bd-667b18435f2f.sql" type="DatabaseScript" editBeforeRun="true" temporary="true" nameIsGenerated="true">
+      <script-file value="c38fab76-e584-49c7-a8bd-667b18435f2f.sql" />
+      <script-mode>FILE</script-mode>
+      <data-source id="c38fab76-e584-49c7-a8bd-667b18435f2f" />
+      <method v="2" />
+    </configuration>
     <configuration name="user" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="backend" />
       <option name="ENV_FILES" value="" />
@@ -143,7 +175,6 @@
     <recent_temporary>
       <list>
         <item itemvalue="Docker.docker-compose.yml.db: Compose Deployment" />
-        <item itemvalue="Python.user" />
       </list>
     </recent_temporary>
   </component>
@@ -169,6 +200,10 @@
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/backend$seed_users_with_role.coverage" NAME="seed_users_with_role Coverage Results" MODIFIED="1760025877933" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/app/scripts" />

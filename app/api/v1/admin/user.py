@@ -10,20 +10,10 @@ from app.services.admin.user import UserService
 router = APIRouter(prefix="/admin/users", tags=["ADMIN USER"])
 
 
-def get_user_service(user_service: UserService = Depends(UserService)) -> UserService:
-    return user_service
-
-
-def get_authorization_service(
-    auth_service: AuthorizationService = Depends(AuthorizationService),
-) -> AuthorizationService:
-    return auth_service
-
-
 @router.get("")
 async def get_users(
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
     search: str | None = Query(None, description="Tìm kiếm theo tên hoặc email"),
     is_verified_email: bool = Query(False),
     is_banned: bool = Query(False),
@@ -46,8 +36,8 @@ async def get_users(
 
 @router.get("/deleted")
 async def get_users_deleted(
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
     search: str | None = Query(None),
     sort_by: str = Query("created_at"),
     is_verified_email: Optional[bool] = Query(None),
@@ -65,8 +55,8 @@ async def get_users_deleted(
 async def update_user(
     user_id: uuid.UUID,
     schema: EditUser = Body(...),
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
 ):
     admin = await authorization.require_role(["ADMIN"])
     return await user_service.update_user_async(schema, admin, user_id)
@@ -74,8 +64,8 @@ async def update_user(
 
 @router.get("/export")
 async def export_user(
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
 ):
     await authorization.require_role(["ADMIN"])
     return await user_service.export_user_async()
@@ -85,8 +75,8 @@ async def export_user(
 async def delete_user(
     user_id: uuid.UUID,
     reason: str = Query(..., description="Lý do xoá người dùng"),
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
 ):
     admin = await authorization.require_role(["ADMIN"])
     return await user_service.delete_user_async(admin, user_id, reason)
@@ -95,8 +85,8 @@ async def delete_user(
 @router.get("/{user_id}")
 async def get_user_by_id(
     user_id: uuid.UUID,
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
 ):
     await authorization.require_role(["ADMIN"])
     return await user_service.get_user_by_id_async(user_id)
@@ -106,8 +96,8 @@ async def get_user_by_id(
 async def ban_user(
     user_id: uuid.UUID,
     schema: BlockUser = Body(...),
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
 ):
     admin = await authorization.require_role(["ADMIN"])
     return await user_service.ban_user_async(admin, user_id, schema)
@@ -116,8 +106,8 @@ async def ban_user(
 @router.post("/{user_id}/unlock_ban")
 async def unlock_ban_user(
     user_id: uuid.UUID,
-    authorization: AuthorizationService = Depends(get_authorization_service),
-    user_service: UserService = Depends(get_user_service),
+    authorization: AuthorizationService = Depends(AuthorizationService),
+    user_service: UserService = Depends(UserService),
 ):
     admin = await authorization.require_role(["ADMIN"])
     return await user_service.unlock_ban_user_async(admin, user_id)

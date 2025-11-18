@@ -1,4 +1,5 @@
 from fastapi import Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm import LLMService
@@ -24,7 +25,7 @@ class CourseService:
     ):
         try:
             prompt = f"""
-                Bạn là chuyên gia đào tạo trong lĩnh vực Công nghệ thông tin.
+                Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
 
                 Hãy viết phần mô tả ngắn gọn, chuyên nghiệp và hấp dẫn cho một khóa học.
 
@@ -47,7 +48,7 @@ class CourseService:
     async def create_description_async(self, schema: CreateCourseDescriptionSchema):
         try:
             prompt = f"""
-                Bạn là chuyên gia đào tạo trong lĩnh vực **Công nghệ thông tin**.
+                Bạn là chuyên gia đào tạo trong lĩnh vực **viết nội dung cho các khóa học trực tuyến.**.
 
                 Hãy viết phần **mô tả chi tiết khóa học** thật chuyên nghiệp, hấp dẫn và có chiều sâu.
 
@@ -69,10 +70,12 @@ class CourseService:
                 - Kiến thức và kỹ năng học viên sẽ đạt được
                 - Ứng dụng thực tế hoặc hướng phát triển nghề nghiệp
                 - Văn phong tự nhiên, truyền cảm hứng, thể hiện chuyên môn sâu.
-                - **Chỉ trả về nội dung mô tả**, không thêm hướng dẫn, chú thích, hay lời chào.
+                - Không trả về tiêu đề ví dụ:  "Nền tảng CNTT và Phần mềm cho Lập trình viên Web"
+                - **Chỉ trả về phần mô tả Markdown**, không thêm lời dẫn, hướng dẫn hay ký tự thừa. chỉ trả về markdown.
+                - không được trả ra dạng json {{"description": "nội dung mô tả"}} mà hãy trả ra đúng phần mô tả thôi
                 """
-
-            return await self.llm_service.call_model(prompt)
+            result = await self.llm_service.call_model(prompt)
+            return PlainTextResponse(result, media_type="text/markdown")
 
         except Exception as e:
             await self.db.rollback()
@@ -83,7 +86,7 @@ class CourseService:
     ):
         try:
             prompt = f"""
-                Bạn là chuyên gia đào tạo trong lĩnh vực Công nghệ thông tin.
+                Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
 
                 Hãy liệt kê **ngắn gọn các mục tiêu học tập** mà học viên sẽ đạt được sau khi hoàn thành khóa học.
 
@@ -113,7 +116,7 @@ class CourseService:
     ):
         try:
             prompt = f"""
-                Bạn là chuyên gia đào tạo trong lĩnh vực Công nghệ thông tin.
+                Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
 
                 Hãy liệt kê **ngắn gọn các yêu cầu cần có hoặc điều kiện cần chuẩn bị** khi học khóa học này.
 
@@ -143,7 +146,7 @@ class CourseService:
     ):
         try:
             prompt = f"""
-                Bạn là chuyên gia đào tạo trong lĩnh vực Công nghệ thông tin.
+                Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
 
                 Hãy liệt kê **các nhóm đối tượng học viên phù hợp nhất** với khóa học này.
 

@@ -10,26 +10,12 @@ from app.services.admin.topic import TopicService
 router = APIRouter(prefix="/admin/topics", tags=["Topics"])
 
 
-# ✅ Inject TopicService chuẩn
-def get_topic_service(
-    topic_service: TopicService = Depends(TopicService),
-) -> TopicService:
-    return topic_service
-
-
-# ✅ Inject RoleService chuẩn
-def get_authorization_service(
-    auth_service: AuthorizationService = Depends(AuthorizationService),
-) -> AuthorizationService:
-    return auth_service
-
-
 @router.post("", summary="Thêm topic mới")
 async def create_topic(
     schema: TopicCreate,
     background_tasks: BackgroundTasks,
-    service: TopicService = Depends(get_topic_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: TopicService = Depends(TopicService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.create_topic_async(schema, background_tasks)
@@ -44,8 +30,8 @@ async def get_topics(
     search: Optional[str] = None,
     sort_by: Optional[str] = Query("order_index"),
     sort_order: Optional[str] = Query("asc", regex="^(asc|desc)$"),
-    service: TopicService = Depends(get_topic_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: TopicService = Depends(TopicService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.get_topics_async(
@@ -56,8 +42,8 @@ async def get_topics(
 @router.delete("/{topic_id}", summary="Xóa topic theo ID")
 async def delete_topic(
     topic_id: UUID,
-    service: TopicService = Depends(get_topic_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: TopicService = Depends(TopicService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.delete_topic_async(topic_id)
@@ -68,8 +54,8 @@ async def update_topic(
     topic_id: UUID,
     schema: TopicUpdate,
     background_tasks: BackgroundTasks,
-    service: TopicService = Depends(get_topic_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: TopicService = Depends(TopicService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.update_topic_async(topic_id, schema, background_tasks)
@@ -78,8 +64,8 @@ async def update_topic(
 @router.get("/{topic_id}", summary="Lấy thông tin topic theo ID")
 async def get_topic(
     topic_id: UUID,
-    service: TopicService = Depends(get_topic_service),
-    authorization: AuthorizationService = Depends(get_authorization_service),
+    service: TopicService = Depends(TopicService),
+    authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     await authorization.require_role(["ADMIN"])
     return await service.get_topic_by_id_async(topic_id)

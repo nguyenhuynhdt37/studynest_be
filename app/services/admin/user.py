@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models.database import CourseEnrollments, Role, User, UserRoles
 from app.db.sesson import get_session
-from app.libs.formats.datetime import to_utc_naive
+from app.libs.formats.datetime import now as get_now, to_utc_naive
 from app.schemas.auth.user import BlockUser, EditUser
 
 
@@ -238,7 +238,7 @@ class UserService:
                     raise HTTPException(status_code=409, detail="Email đã được sử dụng")
                 user.email = schema.email
 
-            user.update_at = datetime.utcnow()
+            user.update_at = get_now()
             await self.db.commit()
             await self.db.refresh(user)
             return {"message": "Cập nhật người dùng thành công"}
@@ -356,9 +356,9 @@ class UserService:
                 user.banned_until = None
             else:
                 user.banned_until = to_utc_naive(
-                    schema.banned_until or datetime.utcnow()
+                    schema.banned_until or get_now()
                 )
-            user.update_at = to_utc_naive(schema.banned_until or datetime.utcnow())
+            user.update_at = to_utc_naive(schema.banned_until or get_now())
 
             await self.db.commit()
             await self.db.refresh(user)
@@ -413,7 +413,7 @@ class UserService:
             user.is_banned = False
             user.banned_reason = None
             user.banned_until = None
-            user.update_at = datetime.utcnow()
+            user.update_at = get_now()
 
             await self.db.commit()
             await self.db.refresh(user)
@@ -578,9 +578,9 @@ class UserService:
                 )
 
             # 🔹 Ghi nhận thời gian và lý do xóa
-            user.deleted_at = datetime.utcnow()
+            user.deleted_at = get_now()
             user.deleted_until = reason or "Không có lý do cụ thể"
-            user.update_at = datetime.utcnow()
+            user.update_at = get_now()
 
             await self.db.commit()
             await self.db.refresh(user)

@@ -1,51 +1,65 @@
 # === Core FastAPI stack ===
-fastapi
-uvicorn[standard]              # uvloop, httptools, websockets
-anyio>=4.0.0
-starlette>=0.37.0
-python-multipart>=0.0.6        # upload file/form
+fastapi>=0.115.6
+uvicorn[standard]>=0.37,<0.38
+anyio>=4.6
+starlette>=0.37.2
+python-multipart>=0.0.9
+pydantic>=2.8
+pydantic-settings>=2.7
+psycopg2-binary
 
 # === Database & ORM ===
-SQLAlchemy[asyncio]>=2.0.36
-greenlet>=3.1.0                # bắt buộc cho async ORM
-asyncpg                        # PostgreSQL async driver
-pgvector                       # vector embedding
-alembic                        # migration
+SQLAlchemy[asyncio]>=2.0.35
+greenlet>=3.0.3
+asyncpg>=0.30
+pgvector>=0.3
+alembic>=1.13
 
 # === Auth & Security ===
-bcrypt
-passlib[bcrypt]
-pyjwt[crypto]                  # hỗ trợ HS + RS + EC keys
-python-slugify                 # sinh slug
-pydantic-settings              # 12-factor config (.env)
+bcrypt>=4.2
+passlib[bcrypt]>=1.7
+pyjwt[crypto]>=2.9
+python-slugify>=8.0
+email-validator>=2.3
+fastapi-mail>=1.5.7
 
 # === Google & AI APIs ===
-google-generativeai
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib
-tiktoken   
-isodate                    # tokenizer OpenAI/Gemini
+google-generativeai>=0.5
+google-api-python-client>=2.152
+google-auth>=2.35
+google-auth-httplib2>=0.2
+google-auth-oauthlib>=1.2
+tiktoken>=0.7
+isodate>=0.6
 
 # === Data & Utils ===
-faker
-pandas
-openpyxl
-python-dotenv
-sqlakeyset[asyncio]
-fastapi-pagination[sqlalchemy]
+faker>=26
+pandas>=2.2
+openpyxl>=3.1
+python-dotenv>=1.0
+sqlakeyset[asyncio]>=2.0
+fastapi-pagination[sqlalchemy]>=0.12
 
 # === Developer tools ===
-black
-ruff
-sqlalchemy2-stubs              # autocomplete ORM
-sqlacodegen                    # generate model từ DB
+black>=25.9
+ruff>=0.6
+sqlalchemy2-stubs>=0.0.2a38
+sqlacodegen>=3.0
 
-# === Optional: psycopg (chỉ chọn 1) ===
-# ⚠️ Nếu bạn đã dùng asyncpg thì KHÔNG cần psycopg
-# psycopg[binary]             # chỉ khi cần sync DB utils (ví dụ seed script)
+# === OCR + Document Parsing (EasyOCR) ===
+easyocr>=1.7.2
+torch>=2.5
+PyMuPDF>=1.24
+pillow>=10.4
+python-docx>=1.1
+unstructured>=0.16
+semantic-text-splitter>=0.12
+loguru>=0.7
+youtube-transcript-api
 
 
+opencv-python-headless
+mediapipe
+face_recognition
 
-python-slugify
+apscheduler

@@ -1,12 +1,12 @@
-# app/core/security.py
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Dict
 
 import bcrypt
 import jwt
 
 from app.core.settings import settings
+from app.libs.formats.datetime import now_tzinfo
 
 
 class SecurityService:
@@ -15,14 +15,23 @@ class SecurityService:
         self.algorithm = settings.ALGORITHM
         self.access_token_expire_minutes = float(settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
+    # ✅ Hỗ trợ async context (dùng được async with)
+    async def __aenter__(self):
+        # Có thể mở resource async ở đây, ví dụ Redis, httpx.AsyncClient, v.v.
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Dọn dẹp tài nguyên async (VD: await client.aclose())
+        return False  # Không nuốt exception
+
     # 🔐 JWT
-    def create_access_token(self, sub: str) -> str:
-        expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
-        payload: Dict[str, Any] = {"sub": sub, "iat": datetime.utcnow(), "exp": expire}
+    async def create_access_token(self, sub: str) -> str:
+        expire = now_tzinfo() + timedelta(minutes=self.access_token_expire_minutes)
+        payload: Dict[str, Any] = {"sub": sub, "iat": now_tzinfo(), "exp": expire}
         token = jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
         return str(token)
 
-    def decode_access_token(self, token: str) -> Dict[str, Any]:
+    async def decode_access_token(self, token: str) -> Dict[str, Any]:
         try:
             return jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
         except jwt.ExpiredSignatureError:
@@ -32,11 +41,11 @@ class SecurityService:
 
     # 🔑 PASSWORD
     @staticmethod
-    def hash_password(plain: str) -> str:
+    async def hash_password(plain: str) -> str:
         return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     @staticmethod
-    def verify_password(plain: str, hashed: str) -> bool:
+    async def verify_password(plain: str, hashed: str) -> bool:
         try:
             return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
         except Exception:
@@ -44,6 +53,5 @@ class SecurityService:
 
     # 🔢 OTP
     @staticmethod
-    def generate_otp() -> str:
-        return str(secrets.randbelow(10**6)).zfill(6)
+    async def generate_otp() -> str:
         return str(secrets.randbelow(10**6)).zfill(6)

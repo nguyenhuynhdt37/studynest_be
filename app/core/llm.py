@@ -21,25 +21,41 @@ class LLMService:
         self.primary_model = "gemini-2.5-flash"
         self.fallback_model = "gemini-1.5-flash"
 
-    async def call_model(self, prompt: str, retries: int = 3) -> str:
+    async def call_model(
+        self,
+        prompt: str,
+        retries: int = 3,
+        mime_type: str = "application/json",
+        temperature: float = 0.5,
+        max_output_tokens: int = 8000,
+    ) -> str:
         """
         Gọi mô hình Gemini để sinh nội dung.
+        - Hỗ trợ định dạng đầu ra (mime_type) như application/json / text/plain
         - Có retry tự động nếu gặp lỗi tạm thời (rate limit, quota).
-        - Tự động fallback sang model nhẹ hơn nếu model chính lỗi nặng.
+        - Fallback sang model nhẹ hơn nếu model chính lỗi nặng.
         """
 
         async def _safe_call(model_name: str) -> str:
             def _sync_call():
                 model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "response_mime_type": mime_type,
+                        "temperature": temperature,
+                        "max_output_tokens": max_output_tokens,
+                    },
+                )
 
-                # Xử lý phản hồi không hợp lệ
+                # --- Xử lý phản hồi không hợp lệ ---
                 if not response or not getattr(response, "text", None):
                     return "⚠️ Mô hình không thể tạo phản hồi cho yêu cầu này."
+
                 text = response.text.strip()
-                # Kiểm tra độ rỗng / vô nghĩa
                 if len(text) < 10 or "I’m sorry" in text or "Xin lỗi" in text:
                     return "⚠️ Mô hình không thể trả lời chính xác cho nội dung này."
+
                 return text
 
             return await asyncio.to_thread(_sync_call)
@@ -48,7 +64,7 @@ class LLMService:
         for attempt in range(1, retries + 1):
             try:
                 return await _safe_call(self.primary_model)
-            except ResourceExhausted:  # Quota exceeded / rate limit
+            except ResourceExhausted:
                 wait_time = 2 * attempt
                 logger.warning(
                     f"⚠️ Quota bị giới hạn (attempt {attempt}/{retries}), đợi {wait_time}s..."
@@ -64,7 +80,7 @@ class LLMService:
                 logger.warning(f"⚠️ Lỗi tạm khi gọi Gemini: {e}")
                 await asyncio.sleep(2)
 
-        # ==== Nếu model chính thất bại → thử fallback model ====
+        # ==== Nếu model chính thất bại → fallback ====
         try:
             logger.info("🔁 Đang thử gọi model dự phòng gemini-1.5-flash ...")
             return await _safe_call(self.fallback_model)

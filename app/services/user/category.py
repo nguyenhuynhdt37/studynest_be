@@ -1,6 +1,6 @@
 # app/services/category_service.py
 from fastapi import Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -34,3 +34,14 @@ class CategoryService:
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(500, f"Lỗi khi lấy danh mục: {e}")
+
+    async def get_all_categories_async(self):
+        query = select(
+            Categories.id,
+            Categories.name,
+            Categories.slug,
+        ).order_by(asc(Categories.name))
+
+        result = await self.db.execute(query)
+        data = result.mappings().all()
+        return data
