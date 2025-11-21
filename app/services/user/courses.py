@@ -771,6 +771,9 @@ class CoursePublicService:
                         "id": str(c.id),
                         "title": c.title,
                         "thumbnail": c.thumbnail_url,
+                        "base_price": c.base_price,
+                        "views": int(c.views or 0),
+                        "rating": float(c.rating_avg or 0),
                         "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
                         "instructor": (
@@ -790,6 +793,138 @@ class CoursePublicService:
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(500, f"Lỗi best-seller: {e}")
+
+    async def get_top_views_courses(
+        self,
+        user_id: uuid.UUID | None = None,
+        category_slug: str | None = None,
+        limit: int = 10,
+        cursor: str | None = None,
+        category_sv: CategoryService = Depends(CategoryService),
+    ):
+        try:
+            # 1) Lấy thống kê GLOBAL (cutoff 80%)
+            stats_stmt = select(
+                Courses.views,
+                Courses.total_enrolls,
+                Courses.rating_avg,
+            ).where(
+                Courses.is_published.is_(True),
+                Courses.approval_status == "approved",
+            )
+            stats = (await self.db.execute(stats_stmt)).mappings().all()
+            if not stats:
+                return {"items": [], "next_cursor": None}
+
+            # Cutoff
+            views_cutoff = np.percentile([s["views"] or 0 for s in stats], 80)
+            enrolls_cutoff = np.percentile([s["total_enrolls"] or 0 for s in stats], 80)
+            rating_cutoff = np.percentile(
+                [float(s["rating_avg"] or 0) for s in stats], 80
+            )
+
+            # 2) Categories filter
+            category_ids = None
+            if category_slug:
+                category_ids = await category_sv.get_all_subcategories(category_slug)
+
+            # 3) Parse cursor: view|id
+            last_views = None
+            last_id = None
+            if cursor:
+                p = cursor.split("|")
+                if len(p) == 2:
+                    last_views = int(p[0])
+                    last_id = p[1]
+
+            # 4) Base query
+            stmt = (
+                select(Courses)
+                .options(selectinload(Courses.instructor))
+                .where(
+                    Courses.is_published.is_(True),
+                    Courses.approval_status == "approved",
+                )
+            )
+
+            if category_ids:
+                stmt = stmt.where(Courses.category_id.in_(category_ids))
+
+            # Bỏ khóa học đã mua
+            if user_id:
+                purchased = select(CourseEnrollments.course_id).where(
+                    CourseEnrollments.user_id == user_id,
+                    CourseEnrollments.status == "active",
+                )
+                stmt = stmt.where(~Courses.id.in_(purchased))
+
+            # 5) Cursor condition (theo views)
+            if last_views is not None:
+                stmt = stmt.where(
+                    (Courses.views < last_views)
+                    | ((Courses.views == last_views) & (Courses.id < last_id))
+                )
+
+            # 6) Order by views desc
+            stmt = stmt.order_by(
+                Courses.views.desc(),
+                Courses.id.desc(),
+            ).limit(limit + 1)
+
+            rows = (await self.db.execute(stmt)).scalars().all()
+
+            # 7) Next cursor
+            if len(rows) == limit + 1:
+                edge = rows[-1]
+                next_cursor = f"{int(edge.views or 0)}|{edge.id}"
+                rows = rows[:-1]
+            else:
+                next_cursor = None
+
+            # 8) Build items + tags
+            seven_days_ago = get_now() - timedelta(days=7)
+            items = []
+
+            for c in rows:
+                tags = []
+                if (c.views or 0) >= views_cutoff:
+                    tags.append("thịnh hành")
+                if (c.total_enrolls or 0) >= enrolls_cutoff:
+                    tags.append("bán chạy nhất")
+                if (c.rating_avg or 0) >= rating_cutoff:
+                    tags.append("được yêu thích")
+
+                created_at_stripped = strip_tz(c.created_at) if c.created_at else None
+                if created_at_stripped and created_at_stripped >= seven_days_ago:
+                    tags.append("mới ra mắt")
+
+                items.append(
+                    {
+                        "id": str(c.id),
+                        "title": c.title,
+                        "thumbnail": c.thumbnail_url,
+                        "base_price": c.base_price,
+                        "views": int(c.views or 0),
+                        "rating": float(c.rating_avg or 0),
+                        "enrolls": int(c.total_enrolls or 0),
+                        "tags": tags,
+                        "instructor": (
+                            {
+                                "id": str(c.instructor.id),
+                                "name": c.instructor.fullname,
+                                "avatar": c.instructor.avatar,
+                            }
+                            if c.instructor
+                            else None
+                        ),
+                    }
+                )
+
+            return {"items": items, "next_cursor": next_cursor}
+
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(500, f"Lỗi top-views: {e}")
 
     async def get_newest_courses(
         self,
@@ -896,9 +1031,10 @@ class CoursePublicService:
                         "id": str(c.id),
                         "title": c.title,
                         "thumbnail": c.thumbnail_url,
-                        "created_at": (
-                            c.created_at.isoformat() if c.created_at else None
-                        ),
+                        "base_price": c.base_price,
+                        "views": int(c.views or 0),
+                        "rating": float(c.rating_avg or 0),
+                        "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
                         "instructor": (
                             {
@@ -1024,8 +1160,10 @@ class CoursePublicService:
                         "id": str(c.id),
                         "title": c.title,
                         "thumbnail": c.thumbnail_url,
+                        "base_price": c.base_price,
                         "views": int(c.views or 0),
-                        "rating": float(c.rating_avg or 0),
+                        "rating_avg": float(c.rating_avg or 0),
+                        "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
                         "instructor": (
                             {
@@ -1044,102 +1182,6 @@ class CoursePublicService:
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(500, f"Lỗi top-rated: {e}")
-
-    async def get_top_view_courses(
-        self,
-        user_id: uuid.UUID | None = None,
-        category_slug: str | None = None,
-        limit: int = 10,
-        cursor: str | None = None,
-        category_sv: CategoryService = Depends(CategoryService),
-    ):
-        try:
-            # 1) Parse cursor "views|id"
-            last_value = None
-            last_id = None
-
-            if cursor:
-                parts = cursor.split("|")
-                if len(parts) == 2:
-                    last_value = int(parts[0])
-                    last_id = parts[1]
-
-            # 2) Lấy category_ids nếu có slug
-            category_ids = None
-            if category_slug:
-                category_ids = await category_sv.get_all_subcategories(category_slug)
-
-            # 3) Base query
-            stmt = (
-                select(Courses)
-                .options(selectinload(Courses.instructor))
-                .where(
-                    Courses.is_published.is_(True),
-                    Courses.approval_status == "approved",
-                )
-            )
-
-            if category_ids:
-                stmt = stmt.where(Courses.category_id.in_(category_ids))
-
-            # 4) Bỏ khóa học đã mua (nếu có user_id)
-            if user_id:
-                purchased = select(CourseEnrollments.course_id).where(
-                    CourseEnrollments.user_id == user_id,
-                    CourseEnrollments.status == "active",
-                )
-                stmt = stmt.where(~Courses.id.in_(purchased))
-
-            # 5) Cursor-based pagination: sort theo views (desc) + id (desc)
-            if last_value is not None:
-                stmt = stmt.where(
-                    (Courses.views < last_value)
-                    | ((Courses.views == last_value) & (Courses.id < last_id))
-                )
-
-            stmt = stmt.order_by(
-                Courses.views.desc(),
-                Courses.id.desc(),
-            ).limit(limit + 1)
-
-            rows = (await self.db.execute(stmt)).scalars().all()
-
-            # 6) Build next_cursor
-            if len(rows) == limit + 1:
-                edge = rows[-1]
-                next_cursor = f"{int(edge.views or 0)}|{edge.id}"
-                rows = rows[:-1]
-            else:
-                next_cursor = None
-
-            # 7) Build output
-            items = []
-            for c in rows:
-                items.append(
-                    {
-                        "id": str(c.id),
-                        "title": c.title,
-                        "thumbnail": c.thumbnail_url,
-                        "views": int(c.views or 0),
-                        "rating_avg": float(c.rating_avg or 0),
-                        "enrolls": int(c.total_enrolls or 0),
-                        "instructor": (
-                            {
-                                "id": str(c.instructor.id),
-                                "name": c.instructor.fullname,
-                                "avatar": c.instructor.avatar,
-                            }
-                            if c.instructor
-                            else None
-                        ),
-                    }
-                )
-
-            return {"items": items, "next_cursor": next_cursor}
-
-        except Exception as e:
-            await self.db.rollback()
-            raise HTTPException(500, f"Lỗi top-views: {e}")
 
     async def get_recommended_top20(self, user_id: uuid.UUID):
         try:
