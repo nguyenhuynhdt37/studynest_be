@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 
 # --- ADMIN ROUTES ---
+from app.api.v1 import test
 from app.api.v1.admin import category as admin_category
 from app.api.v1.admin import discounts as admin_discounts
 from app.api.v1.admin import lecturer as admin_lecturer
@@ -15,6 +16,7 @@ from app.api.v1.admin import refunds as admin_refunds
 from app.api.v1.admin import topic as admin_topic
 from app.api.v1.admin import transactions as admin_transactions
 from app.api.v1.admin import user as admin_user
+from app.api.v1.admin import withdraw as admin_withdraw
 
 # --- CHAT / AI ROUTES ---
 from app.api.v1.chat.admin import topic as chat_topic_admin
@@ -26,25 +28,26 @@ from app.api.v1.chat.user import profile as chat_profile_user
 from app.api.v1.lecturer import chapter, lesson
 from app.api.v1.lecturer import courses as lecturer_courses
 from app.api.v1.lecturer import discounts as lecturer_discounts
+from app.api.v1.lecturer import payout as lecturer_payout
 from app.api.v1.lecturer import refunds as lecturer_refunds
 from app.api.v1.lecturer import transactions as lecturer_transactions
-from app.api.v1.lecturer import wallet as lecturer_wallets
+from app.api.v1.lecturer import wallets as lecturer_wallets
+from app.api.v1.lecturer import withdraw as lecturer_withdraw
 
-# ===== IMPORT ROUTERS =====
-from app.api.v1.shares import auth, location, notification, upload, wallets
-
-# --- USER ROUTES ---
-from app.api.v1.user import category, favorites, learning, learning_fields
+# share
+from app.api.v1.shares import auth, location, notification, profile, upload
+from app.api.v1.user import category, favorites, learning, user_preferences, wallets
 from app.api.v1.user import course_enroll as course_enroll
 from app.api.v1.user import courses as user_courses
 from app.api.v1.user import discounts as user_discounts
-from app.api.v1.user import profile as user_profile
 from app.api.v1.user import refunds as user_refunds
 from app.api.v1.user import transaction as user_transaction
 from app.core.scheduler import scheduler, start_scheduler
 
 # --- MIDDLEWARE ---
 from app.middleware.request_context import RequestContextMiddleware
+
+# --- USER ROUTES ---
 
 
 @asynccontextmanager
@@ -53,13 +56,14 @@ async def lifespan(app: FastAPI):
     # ================================
     # 1) GLOBAL HTTP CLIENT
     # ================================
-    app.state.http = httpx.AsyncClient(timeout=30)
+    http = httpx.AsyncClient(timeout=30)
+    app.state.http = http
     print("🌐 HTTP client started")
 
     # ================================
     # 2) START APSCHEDULER
     # ================================
-    start_scheduler()
+    start_scheduler(http)
     print("⏱ Scheduler started")
 
     # App chạy
@@ -113,13 +117,14 @@ add_pagination(app)
 prefix = "/api/v1"
 
 # ===== REGISTER ROUTERS =====
-
+app.include_router(test.router, prefix=prefix)
 # --- Share ---
 app.include_router(auth.router, prefix=prefix)
 app.include_router(location.router, prefix=prefix)
 app.include_router(wallets.router, prefix=prefix)
 app.include_router(notification.router, prefix=prefix)
 app.include_router(upload.router, prefix=prefix)
+app.include_router(profile.router, prefix=prefix)
 
 # --- USER ROUTES ---
 app.include_router(category.router, prefix=prefix)
@@ -127,8 +132,7 @@ app.include_router(user_courses.router, prefix=prefix)
 app.include_router(course_enroll.router, prefix=prefix)
 app.include_router(favorites.router, prefix=prefix)
 app.include_router(learning.router, prefix=prefix)
-app.include_router(learning_fields.router, prefix=prefix)
-app.include_router(user_profile.router, prefix=prefix)
+app.include_router(user_preferences.router, prefix=prefix)
 app.include_router(user_transaction.router, prefix=prefix)
 app.include_router(user_discounts.router, prefix=prefix)
 app.include_router(user_refunds.router, prefix=prefix)
@@ -141,6 +145,8 @@ app.include_router(lecturer_discounts.router, prefix=prefix)
 app.include_router(lecturer_wallets.router, prefix=prefix)
 app.include_router(lecturer_transactions.router, prefix=prefix)
 app.include_router(lecturer_refunds.router, prefix=prefix)
+app.include_router(lecturer_payout.router, prefix=prefix)
+app.include_router(lecturer_withdraw.router, prefix=prefix)
 
 # --- ADMIN ROUTES ---
 app.include_router(admin_user.router, prefix=prefix)
@@ -152,6 +158,7 @@ app.include_router(platform_wallet_service.router, prefix=prefix)
 app.include_router(admin_discounts.router, prefix=prefix)
 app.include_router(admin_transactions.router, prefix=prefix)
 app.include_router(admin_refunds.router, prefix=prefix)
+app.include_router(admin_withdraw.router, prefix=prefix)
 
 # --- CHAT / AI ROUTES ---
 app.include_router(chat_topic_admin.router, prefix=prefix)

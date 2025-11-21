@@ -1,6 +1,11 @@
-from sqlalchemy import select
+import base64
+
+from fastapi import Depends
+from fastapi.responses import RedirectResponse
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.settings import settings
 from app.db.models.database import (
     Courses,
     InstructorEarnings,
@@ -11,12 +16,19 @@ from app.db.models.database import (
     User,
     Wallets,
 )
+from app.db.sesson import get_session
 from app.libs.formats.datetime import now as get_now
 from app.schemas.shares.notification import NotificationCreateSchema
+from app.services.shares.notification import NotificationService
+from app.services.shares.paypal_service import PayPalService
 
 
 class PayoutService:
-    def __init__(self, db: AsyncSession, notification_service=None):
+    def __init__(
+        self,
+        db: AsyncSession = Depends(get_session),
+        notification_service=Depends(NotificationService),
+    ):
         self.db = db
         self.notification_service = notification_service
 
@@ -91,7 +103,7 @@ class PayoutService:
             description_lines.append(f"Số tiền nhận: {amount:,} VND")
 
             payout_txn = Transactions(
-                user_id=lecturer.id,  # người nhận tiền
+                user_id=lecturer.id,
                 amount=amount,
                 type="income",
                 direction="in",
@@ -227,3 +239,77 @@ class PayoutService:
                 success += 1
 
         return {"processed": len(rows), "paid": success}
+
+    # ==========================================================
+
+    async def paypal_connect_callback_async(
+        self,
+        code: str,
+        paypal: PayPalService,
+        user: User,
+        state: str | None,
+    ):
+        """
+        Xử lý callback PayPal OAuth (style try-escape):
+        - Gọi get_userinfo_from_code -> trả email + payer_id
+        - Nếu lỗi hoặc thiếu info -> redirect fallback
+        - Nếu ok -> lưu vào DB rồi redirect FE với status success
+        """
+
+        redirect_uri = f"{settings.BACKEND_URL}/api/v1/lecturer/payout/callback"
+
+        # ==========================================
+        # 1) SAFE TRY: đổi code -> userinfo (id_token hoặc userinfo API)
+        # ==========================================
+        try:
+            token_data = await paypal.get_userinfo_from_code(code, redirect_uri)
+        except Exception:
+            # Escape yên lặng, không crash
+            return RedirectResponse(
+                f"{settings.FRONTEND_URL}/lecturer/profile?paypal=connected&error=exchange"
+            )
+
+        # ==========================================
+        # 2) Check data hợp lệ
+        # ==========================================
+        email = token_data.get("email")
+        payer_id = token_data.get("payer_id")
+        payer_id = payer_id.split("/")[-1] if payer_id else None
+        if not email or not payer_id:
+            return RedirectResponse(
+                f"{settings.FRONTEND_URL}/lecturer/profile?paypal=connected&error=missing_info"
+            )
+
+        # ==========================================
+        # 3) Lưu vào DB
+        # ==========================================
+        try:
+            await self.db.execute(
+                update(User)
+                .where(User.id == user.id)
+                .values(
+                    paypal_email=email,
+                    paypal_payer_id=payer_id,
+                )
+            )
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            return RedirectResponse(
+                f"{settings.FRONTEND_URL}/lecturer/profile?paypal=connected&error=db"
+            )
+
+        # ==========================================
+        # 4) Redirect FE (ưu tiên state)
+        # ==========================================
+        if state:
+            try:
+                decoded = base64.urlsafe_b64decode(state).decode("utf-8")
+                return RedirectResponse(f"{decoded}?status=success")
+            except Exception:
+                pass
+
+        # Fallback cuối
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/lecturer/profile?paypal=connected&status=success"
+        )

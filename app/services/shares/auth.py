@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from re import DEBUG
 from typing import Any
 
@@ -121,9 +121,7 @@ class AuthService:
 
     async def refesh_email_async(self, schema: RefreshEmail):
         try:
-            today_start = get_now().replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
+            today_start = get_now().replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow_start = today_start + timedelta(days=1)
             user = (
                 await self.db.scalars(select(User).where((User.email == schema.email)))
@@ -252,6 +250,11 @@ class AuthService:
 
     async def me_async(self, user: User) -> dict[str, Any]:
         roles = [ur.role.role_name for ur in user.user_roles if ur.role]
+
+        # Chuẩn hóa PayPal payer_id (nếu dạng URL)
+        raw_payer_id = user.paypal_payer_id
+        paypal_payer_id = raw_payer_id.split("/")[-1] if raw_payer_id else None
+
         return {
             "id": user.id,
             "fullname": user.fullname,
@@ -259,9 +262,27 @@ class AuthService:
             "avatar": user.avatar,
             "bio": user.bio,
             "facebook_url": user.facebook_url,
+            # ====== Info cơ bản ======
+            "birthday": user.birthday,
+            "conscious": user.conscious,
+            "district": user.district,
+            "citizenship_identity": user.citizenship_identity,
+            # ====== Account status ======
             "is_verified_email": bool(user.is_verified_email),
             "email_verified_at": (
                 user.email_verified_at if user.is_verified_email else None
             ),
+            "is_banned": bool(user.is_banned),
+            "banned_reason": user.banned_reason,
+            "banned_until": user.banned_until,
+            "last_login_at": user.last_login_at,
+            # ====== Auth ======
             "roles": roles,
+            # ====== PayPal (chuẩn hóa để dùng rút tiền) ======
+            "paypal_email": user.paypal_email,
+            "paypal_payer_id": paypal_payer_id,
+            "paypal_raw_payer_id": user.paypal_payer_id,  # để debug nếu cần
+            # ====== System timestamps ======
+            "created_at": user.create_at,
+            "updated_at": user.update_at,
         }

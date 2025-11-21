@@ -57,12 +57,13 @@ async def get_my_transactions_top_5(
     method: str | None = None,
     order_by: str = "created_at",
     order_dir: str = "desc",
-    date_from: str | None = None,
-    date_to: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     authorization_service: AuthorizationService = Depends(AuthorizationService),
     transactions_service: TransactionsService = Depends(TransactionsService),
 ):
-
+    date_from = await to_vietnam_naive(date_from)
+    date_to = await to_vietnam_naive(date_to)
     user = await authorization_service.get_current_user()
     return await transactions_service.get_user_transactions(
         user_id=user.id,

@@ -1,12 +1,109 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
 
 from app.core.deps import AuthorizationService
+from app.db.models.database import User
 from app.schemas.lecturer.courses import CourseReview
+from app.services.user.category import CategoryService
 from app.services.user.courses import CoursePublicService
 
 router = APIRouter(prefix="/courses", tags=["User Course"])
+
+
+@router.get("/feed/recommend")
+async def recommend_feed(
+    auth: AuthorizationService = Depends(AuthorizationService),
+    course_service: CoursePublicService = Depends(CoursePublicService),
+):
+    try:
+        user: User = await auth.get_current_user()
+        return await course_service.get_recommended_top20(user.id)
+    except Exception as e:
+        print("❌ Recommend feed error:", e)
+        raise HTTPException(500, "Có lỗi khi lấy danh sách gợi ý khóa học. {e}")
+
+
+@router.get("/feed/top-rated")
+async def top_rated_courses(
+    limit: int = Query(10, ge=1, le=50),
+    cursor: str | None = Query(None),
+    auth: AuthorizationService = Depends(AuthorizationService),
+    category_service: CategoryService = Depends(CategoryService),
+    course_service: CoursePublicService = Depends(CoursePublicService),
+):
+
+    try:
+        user = await auth.get_current_user_if_any()
+
+        result = await course_service.get_top_rated_courses(
+            user_id=user.id if user else None,
+            limit=limit,
+            cursor=cursor,
+            category_sv=category_service,
+        )
+        return result
+
+    except Exception as e:
+        raise HTTPException(500, f"Lỗi router top-rated: {e}")
+
+
+@router.get("/feed/newest")
+async def newest_courses(
+    limit: int = Query(10, ge=1, le=50),
+    cursor: str | None = Query(None),
+    auth: AuthorizationService = Depends(AuthorizationService),
+    category_service: CategoryService = Depends(CategoryService),
+    course_service: CoursePublicService = Depends(CoursePublicService),
+):
+
+    try:
+        # Nếu user chưa đăng nhập → user_id = None (vẫn dùng đc)
+        user = await auth.get_current_user_if_any()
+
+        result = await course_service.get_newest_courses(
+            user_id=user.id if user else None,
+            limit=limit,
+            cursor=cursor,
+            category_sv=category_service,
+        )
+        return result
+
+    except Exception as e:
+        raise HTTPException(500, f"Lỗi router top-rated: {e}")
+
+
+@router.get("/feed/top-view")
+async def get_top_view_courses(
+    limit: int = Query(10, ge=1, le=50),
+    cursor: str | None = Query(None),
+    auth: AuthorizationService = Depends(AuthorizationService),
+    category_service: CategoryService = Depends(CategoryService),
+    course_service: CoursePublicService = Depends(CoursePublicService),
+):
+
+    try:
+        # Nếu user chưa đăng nhập → user_id = None (vẫn dùng đc)
+        user = await auth.get_current_user_if_any()
+
+        result = await course_service.get_top_view_courses(
+            user_id=user.id if user else None,
+            limit=limit,
+            cursor=cursor,
+            category_sv=category_service,
+        )
+        return result
+
+    except Exception as e:
+        raise HTTPException(500, f"Lỗi router top-rated: {e}")
 
 
 @router.post("/{course_id}/review")
@@ -21,43 +118,6 @@ async def review_course(
     return await course_service.review_course_async(
         course_id, background_tasks, schema, user
     )
-
-
-@router.get("/feeds")
-async def get_feeds(
-    feed_type: str = "all",
-    cursor: str | None = None,
-    limit: int = 10,  # ✅ thêm mặc định
-    course_service: CoursePublicService = Depends(CoursePublicService),
-    authorization: AuthorizationService = Depends(AuthorizationService),
-):
-    user = await authorization.get_current_user_if_any()
-    result = {}
-    if feed_type in ("all", "personalization"):
-        result["personalization"] = await course_service.get_course_feed_async(
-            "Khóa học dành riêng cho bạn", "personalization", limit, cursor, user
-        )
-    if feed_type in ("all", "views"):
-        result["views"] = await course_service.get_course_feed_async(
-            "Các khóa học thịnh hành", "views", limit, cursor, user
-        )
-
-    if feed_type in ("all", "best_sellers"):
-        result["best_sellers"] = await course_service.get_course_feed_async(
-            "Khóa học bán chạy", "total_enrolls", limit, cursor, user
-        )
-
-    if feed_type in ("all", "rating"):
-        result["rating"] = await course_service.get_course_feed_async(
-            "Khóa học được đánh giá cao", "rating_avg", limit, cursor, user
-        )
-
-    if feed_type in ("all", "created_at"):
-        result["created_at"] = await course_service.get_course_feed_async(
-            "Khóa học mới ra mắt", "created_at", limit, cursor, user
-        )
-
-    return result
 
 
 @router.get("/{course_id}/detail-info", status_code=status.HTTP_200_OK)

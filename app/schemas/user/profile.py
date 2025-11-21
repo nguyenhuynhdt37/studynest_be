@@ -11,3 +11,4 @@ class ProfileUpdate(BaseModel):
     conscious: Optional[str] = None
     district: Optional[str] = None
     citizenship_identity: Optional[str] = None
+    instructor_description: Optional[str] = None

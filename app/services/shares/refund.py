@@ -19,6 +19,7 @@ from app.db.models.database import (
 from app.db.sesson import get_session
 from app.libs.formats.datetime import now as get_now
 from app.schemas.shares.notification import NotificationCreateSchema
+from app.services.shares.notification import NotificationService
 
 
 class RefundService:
@@ -356,6 +357,7 @@ class RefundService:
         user_id: uuid.UUID,
         purchase_item_id: uuid.UUID,
         reason: str,
+        notification_service: NotificationService,
     ):
         """
         Tạo yêu cầu refund:
@@ -434,6 +436,7 @@ class RefundService:
                     400, "Bạn đã gửi yêu cầu hoàn tiền cho đơn này rồi."
                 )
 
+            user = await self.db.get(User, user_id)
             # ======================================================
             # 5) TẠO REFUND REQUEST
             # ======================================================
@@ -443,13 +446,27 @@ class RefundService:
                 instructor_id=instructor_id,
                 refund_amount=earnings.amount_instructor,
                 reason=reason,
-                status="requested",  # chờ giảng viên duyệt
+                status="requested",
                 created_at=now,
             )
 
             self.db.add(refund_request)
             await self.db.commit()
             await self.db.refresh(refund_request)
+
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=instructor_id,
+                    roles=["LECTURER"],
+                    title="Có yêu cầu hoàn tiền mới 📝",
+                    content=f"{(user.fullname if user and user.fullname else user.id if user else user_id)} đã gửi yêu cầu hoàn tiền cho khóa học {course.title}.",
+                    url="/lecturer/refund",
+                    type="wallet",
+                    role_target=["LECTURER"],
+                    metadata={"transaction_id": str(purchase_item.transaction_id)},
+                    action="open_url",
+                )
+            )
 
             return {
                 "message": "Gửi yêu cầu hoàn tiền thành công.",
@@ -693,8 +710,8 @@ class RefundService:
                                 user_id=student_user.id,
                                 roles=["USER"],
                                 title="Yêu cầu hoàn tiền bị từ chối ❌",
-                                content=f"Giảng viên từ chối refund: {reason}",
-                                url=f"/courses/{course.id}/refunds",
+                                content=f"Giảng viên từ chối hoàn tiền: {reason}",
+                                url=f"/refunds/{refund.id}",
                                 type="refund",
                                 role_target=["USER"],
                                 metadata={"refund_id": str(refund.id)},
@@ -823,7 +840,7 @@ class RefundService:
                                 roles=["USER"],
                                 title="Yêu cầu hoàn tiền bị từ chối ❌",
                                 content=f"Admin từ chối yêu cầu hoàn tiền: {reason}",
-                                url=f"/courses/{course.id}/refunds",
+                                url=f"/refunds/{refund.id}",
                                 type="refund",
                                 role_target=["USER"],
                                 metadata={"refund_id": str(refund.id)},
@@ -887,7 +904,7 @@ class RefundService:
                                 roles=["USER"],
                                 title="Hoàn tiền thành công 💸",
                                 content=f"Bạn đã được hoàn {refund_amount:,} VND (Admin duyệt).",
-                                url="/wallets/transactions",
+                                url=f"/refunds/{refund.id}",
                                 type="refund",
                                 role_target=["USER"],
                                 metadata={"refund_id": str(refund.id)},

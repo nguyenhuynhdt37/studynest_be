@@ -66,4 +66,3 @@ async def check_is_login(
     if user:
         return {"message": "account is login"}
     return {"message": "account is not login"}
-    return {"message": "account is not login"}

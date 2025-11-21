@@ -18,12 +18,12 @@ from app.db.models.database import (
     InstructorEarnings,
     PlatformSettings,
     PlatformWalletHistory,
-    PlatformWallets,
     PurchaseItems,
     RefundRequests,
     Transactions,
     User,
     Wallets,
+    WithdrawalRequests,
 )
 from app.db.sesson import get_session
 from app.libs.formats.datetime import now as get_now
@@ -195,14 +195,16 @@ class TransactionsService:
         user_id: uuid.UUID,
     ):
         """
-        Lấy chi tiết 1 giao dịch của người dùng.
-        JOIN tất cả bảng liên quan: purchase_items, course, instructor, earnings, refund_requests.
+        Lấy chi tiết 1 giao dịch (tự động phân loại):
+        - deposit
+        - purchase
+        - refund
+        - income
+        - withdraw_request
+        - withdraw_paid
         """
 
-        # ======================================================
-        # 1) Lấy giao dịch
-        # ======================================================
-        tx: Transactions | None = await self.db.scalar(
+        tx = await self.db.scalar(
             select(Transactions)
             .where(Transactions.id == transaction_id)
             .where(Transactions.user_id == user_id)
@@ -211,145 +213,143 @@ class TransactionsService:
         if not tx:
             raise HTTPException(404, "Không tìm thấy giao dịch.")
 
-        # ======================================================
-        # 2) JOIN purchase item (nếu là giao dịch mua)
-        # ======================================================
-        purchase_item = None
-        course = None
-        instructor = None
-        discount = None
-
-        purchase_item = await self.db.scalar(
-            select(PurchaseItems).where(PurchaseItems.transaction_id == tx.id)
-        )
-
-        if purchase_item:
-            # join course
-            course = await self.db.scalar(
-                select(Courses).where(Courses.id == purchase_item.course_id)
-            )
-
-            # join instructor
-            if course:
-                instructor = await self.db.scalar(
-                    select(User).where(User.id == course.instructor_id)
-                )
-
-            # join discount
-            if purchase_item.discount_id:
-                discount = await self.db.scalar(
-                    select(Discounts).where(Discounts.id == purchase_item.discount_id)
-                )
-
-        # ======================================================
-        # 3) JOIN earnings nếu có (giảng viên)
-        # ======================================================
-        earnings = None
-        if purchase_item:
-            earnings = await self.db.scalar(
-                select(InstructorEarnings).where(
-                    InstructorEarnings.transaction_id == tx.id
-                )
-            )
-
-        # ======================================================
-        # 4) JOIN refund request nếu có
-        # ======================================================
-        refund_request = None
-        refund_request = (
-            await self.db.scalar(
-                select(RefundRequests).where(
-                    RefundRequests.purchase_item_id == purchase_item.id
-                )
-            )
-            if purchase_item
-            else None
-        )
-
-        # ======================================================
-        # 5) Build data trả về đẹp mắt
-        # ======================================================
-
         detail = {
             "id": str(tx.id),
-            "type": tx.type,  # purchase/deposit/refund/withdraw
-            "method": tx.method,
-            "gateway": tx.gateway,
-            "amount": float(tx.amount),
+            "type": tx.type,
             "direction": tx.direction,
+            "amount": float(tx.amount),
             "currency": tx.currency,
+            "gateway": tx.gateway,
+            "method": tx.method,
             "status": tx.status,
             "description": tx.description,
-            "order_id": tx.order_id,
             "transaction_code": tx.transaction_code,
+            "order_id": tx.order_id,
             "created_at": tx.created_at,
             "confirmed_at": tx.confirmed_at,
         }
 
-        # ----- Purchase info -----
-        if purchase_item:
-            detail["purchase"] = {
-                "purchase_item_id": str(purchase_item.id),
-                "original_price": float(purchase_item.original_price),
-                "discounted_price": float(purchase_item.discounted_price),
-                "discount_amount": float(purchase_item.discount_amount or 0),
-                "status": purchase_item.status,
-                "created_at": purchase_item.created_at,
+        # =====================================================
+        # NHÓM 1: GIAO DỊCH NẠP TIỀN PAYPAL (deposit)
+        # =====================================================
+        if tx.type == "deposit":
+            detail["deposit"] = {
+                "paypal_order_id": tx.order_id,
+                "paypal_capture_id": tx.transaction_code,
+                "from": tx.gateway,
             }
+            return detail
 
-        # ----- Course info -----
-        if course:
-            detail["course"] = {
-                "course_id": str(course.id),
-                "slug": course.slug,
-                "title": course.title,
-                "thumbnail": course.thumbnail_url,
-                "instructor_id": str(course.instructor_id),
-            }
+        # =====================================================
+        # NHÓM 2: GIAO DỊCH MUA KHÓA HỌC (purchase)
+        # =====================================================
+        if tx.type == "purchase":
+            purchase_item = await self.db.scalar(
+                select(PurchaseItems).where(PurchaseItems.transaction_id == tx.id)
+            )
+            if purchase_item:
+                detail["purchase"] = {
+                    "purchase_item_id": str(purchase_item.id),
+                    "original_price": float(purchase_item.original_price),
+                    "discounted_price": float(purchase_item.discounted_price),
+                    "discount_amount": float(purchase_item.discount_amount or 0),
+                    "status": purchase_item.status,
+                }
 
-        # ----- Instructor info -----
-        if instructor:
-            detail["instructor"] = {
-                "name": instructor.fullname,
-                "avatar": instructor.avatar,
-                "id": str(instructor.id),
-            }
+                course = await self.db.scalar(
+                    select(Courses).where(Courses.id == purchase_item.course_id)
+                )
+                if course:
+                    detail["course"] = {
+                        "id": str(course.id),
+                        "title": course.title,
+                        "slug": course.slug,
+                        "thumbnail": course.thumbnail_url,
+                        "instructor_id": str(course.instructor_id),
+                    }
 
-        # ----- Discount info -----
-        if discount:
-            detail["discount"] = {
-                "discount_id": str(discount.id),
-                "code": discount.discount_code,
-                "type": discount.discount_type,
-                "percent_value": float(discount.percent_value or 0),
-                "fixed_value": float(discount.fixed_value or 0),
-            }
+                discount = None
+                if purchase_item.discount_id:
+                    discount = await self.db.scalar(
+                        select(Discounts).where(
+                            Discounts.id == purchase_item.discount_id
+                        )
+                    )
+                if discount:
+                    detail["discount"] = {
+                        "code": discount.discount_code,
+                        "type": discount.discount_type,
+                        "percent_value": float(discount.percent_value or 0),
+                        "fixed_value": float(discount.fixed_value or 0),
+                    }
 
-        # ----- Earnings info -----
-        if earnings:
-            detail["earnings"] = {
-                "amount_instructor": float(earnings.amount_instructor),
-                "amount_platform": float(earnings.amount_platform),
-                "status": earnings.status,
-                "hold_until": earnings.hold_until,
-                "available_at": earnings.available_at,
-                "paid_at": earnings.paid_at,
-            }
+                refund_request = await self.db.scalar(
+                    select(RefundRequests).where(
+                        RefundRequests.purchase_item_id == purchase_item.id
+                    )
+                )
+                if refund_request:
+                    detail["refund_request"] = {
+                        "refund_id": str(refund_request.id),
+                        "status": refund_request.status,
+                        "amount": float(refund_request.refund_amount),
+                    }
 
-        # ----- Refund request info -----
-        if refund_request:
-            detail["refund_request"] = {
-                "refund_id": str(refund_request.id),
-                "status": refund_request.status,
-                "reason": refund_request.reason,
-                "instructor_comment": refund_request.instructor_comment,
-                "admin_comment": refund_request.admin_comment,
-                "refund_amount": float(refund_request.refund_amount),
-                "created_at": refund_request.created_at,
-                "instructor_reviewed_at": refund_request.instructor_reviewed_at,
-                "admin_reviewed_at": refund_request.admin_reviewed_at,
-                "resolved_at": refund_request.resolved_at,
-            }
+            return detail
+
+        # =====================================================
+        # NHÓM 3: THU NHẬP GIẢNG VIÊN (income)
+        # =====================================================
+        if tx.type == "income":
+            earning = await self.db.scalar(
+                select(InstructorEarnings).where(
+                    InstructorEarnings.transaction_id == tx.id
+                )
+            )
+            if earning:
+                detail["income"] = {
+                    "amount_instructor": float(earning.amount_instructor),
+                    "amount_platform": float(earning.amount_platform),
+                    "hold_until": earning.hold_until,
+                    "available_at": earning.available_at,
+                    "paid_at": earning.paid_at,
+                }
+            return detail
+
+        # =====================================================
+        # NHÓM 4: HOÀN TIỀN (refund)
+        # =====================================================
+        if tx.type == "refund":
+            refund = await self.db.scalar(
+                select(RefundRequests).where(RefundRequests.id == tx.ref_id)
+            )
+            if refund:
+                detail["refund"] = {
+                    "refund_id": str(refund.id),
+                    "status": refund.status,
+                    "reason": refund.reason,
+                    "refund_amount": float(refund.refund_amount),
+                }
+            return detail
+
+        # =====================================================
+        # NHÓM 5: RÚT TIỀN (withdraw_request / withdraw_paid)
+        # =====================================================
+        if tx.type.startswith("withdraw"):
+            withdrawal = await self.db.scalar(
+                select(WithdrawalRequests).where(WithdrawalRequests.id == tx.ref_id)
+            )
+            if withdrawal:
+                detail["withdraw"] = {
+                    "withdrawal_id": str(withdrawal.id),
+                    "status": withdrawal.status,
+                    "requested_at": withdrawal.requested_at,
+                    "approved_at": withdrawal.approved_at,
+                    "rejected_at": withdrawal.rejected_at,
+                    "amount": float(withdrawal.amount),
+                    "currency": withdrawal.currency,
+                }
+            return detail
 
         return detail
 
@@ -581,21 +581,6 @@ class TransactionsService:
                 self.db.add(transaction)
                 await self.db.flush()
 
-                # 5.2 LẤY / TẠO VÍ PLATFORM
-                platform_wallet = await self.db.scalar(
-                    select(PlatformWallets).with_for_update()
-                )
-                if platform_wallet is None:
-                    platform_wallet = PlatformWallets(
-                        balance=Decimal("0"),
-                        total_in=Decimal("0"),
-                        total_out=Decimal("0"),
-                        holding_amount=Decimal("0"),
-                        platform_fee_total=Decimal("0"),
-                    )
-                    self.db.add(platform_wallet)
-                    await self.db.flush()
-
                 # 5.3 PURCHASE ITEMS
                 for item in discount_result["items"]:
                     base_price = Decimal(str(item["base_price"]))
@@ -712,47 +697,6 @@ class TransactionsService:
                         created_at=now,
                     )
                     self.db.add(earning)
-
-                    # PLATFORM WALLET UPDATE
-                    platform_wallet.balance += pi.discounted_price
-                    platform_wallet.total_in += pi.discounted_price
-                    platform_wallet.holding_amount += instructor_share
-                    platform_wallet.platform_fee_total += platform_share
-                    platform_wallet.updated_at = now
-
-                    # IN
-                    self.db.add(
-                        PlatformWalletHistory(
-                            id=uuid.uuid4(),
-                            wallet_id=platform_wallet.id,
-                            type="in",
-                            amount=pi.discounted_price,
-                            related_transaction_id=transaction.id,
-                            note=f"Tiền vào từ khóa học '{course.title}'",
-                        )
-                    )
-                    # HOLD
-                    self.db.add(
-                        PlatformWalletHistory(
-                            id=uuid.uuid4(),
-                            wallet_id=platform_wallet.id,
-                            type="hold",
-                            amount=instructor_share,
-                            related_transaction_id=transaction.id,
-                            note=f"Giữ tiền instructor khóa '{course.title}'",
-                        )
-                    )
-                    # FEE
-                    self.db.add(
-                        PlatformWalletHistory(
-                            id=uuid.uuid4(),
-                            wallet_id=platform_wallet.id,
-                            type="fee",
-                            amount=platform_share,
-                            related_transaction_id=transaction.id,
-                            note=f"Phí nền tảng khóa '{course.title}'",
-                        )
-                    )
 
             # ============================
             # 6) NOTIFICATIONS
@@ -1026,14 +970,51 @@ class TransactionsService:
         result = await self.db.execute(items_stmt)
         rows = result.all()
 
-        # rows: list[(Transactions, User, Courses)]
         items = []
         for tx, u, c in rows:
             items.append(
                 {
-                    "transaction": tx,
-                    "user": u,
-                    "course": c,
+                    "transaction": {
+                        "id": str(tx.id),
+                        "ref_id": tx.ref_id,
+                        "direction": tx.direction,
+                        "confirmed_at": (
+                            tx.confirmed_at.isoformat() if tx.confirmed_at else None
+                        ),
+                        "user_id": str(tx.user_id) if tx.user_id else None,
+                        "method": tx.method,
+                        "updated_at": tx.updated_at.isoformat(),
+                        "gateway": tx.gateway,
+                        "return_pathname": tx.return_pathname,
+                        "order_id": tx.order_id,
+                        "return_origin": tx.return_origin,
+                        "type": tx.type,
+                        "status": tx.status,
+                        "amount": float(tx.amount),
+                        "course_id": str(tx.course_id) if tx.course_id else None,
+                        "transaction_code": tx.transaction_code,
+                        "description": tx.description,
+                        "currency": tx.currency,
+                        "created_at": tx.created_at.isoformat(),
+                    },
+                    "user": (
+                        {
+                            "id": str(u.id),
+                            "fullname": u.fullname,
+                            "email": u.email,
+                            "avatar": u.avatar,
+                        }
+                        if u
+                        else None
+                    ),
+                    "course": (
+                        {
+                            "id": str(c.id),
+                            "title": c.title,
+                        }
+                        if c
+                        else None
+                    ),
                 }
             )
 
@@ -1180,7 +1161,7 @@ class TransactionsService:
             "platform_wallet_logs": platform_logs,  # log ví hệ thống
         }
 
-    async def get_lecturer_transactions_with_details(
+    async def get_lecturer_transactions(
         self,
         instructor_id: uuid.UUID,
         page: int = 1,

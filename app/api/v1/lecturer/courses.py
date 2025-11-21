@@ -22,20 +22,23 @@ router = APIRouter(prefix="/lecturer/courses", tags=["Lecturer Course"])
 
 @router.get("", status_code=status.HTTP_200_OK)
 async def getCategory(
-    lecturer_id: str,
     page: int = 1,
     page_size: int = 10,
     sort_by: Optional[
         str
     ] = "revenue",  # revenue | created_at | views | enrolls | rating
-    is_published: Optional[bool] = None,
+    # is_published: Optional[bool] = None,
     search: Optional[str] = None,
     course_service: CourseService = Depends(CourseService),
     authorization: AuthorizationService = Depends(AuthorizationService),
 ):
     lecturer = await authorization.require_role(["LECTURER"])
     return await course_service.get_courses_by_lecturer_async(
-        lecturer.id, page, page_size, sort_by, is_published, search
+        lecturer_id=lecturer.id,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        search=search,
     )
 
 

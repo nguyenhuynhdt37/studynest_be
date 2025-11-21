@@ -2,9 +2,6 @@
 import asyncio
 import mimetypes
 import uuid
-from datetime import datetime
-
-from app.libs.formats.datetime import now as get_now
 from email.quoprimime import unquote
 from math import exp
 from urllib.parse import unquote
@@ -22,6 +19,7 @@ from app.core.llm import LLMService
 from app.core.settings import settings
 from app.db.models.database import User, UserEmbeddingHistory
 from app.db.sesson import AsyncSessionLocal
+from app.libs.formats.datetime import now as get_now
 
 
 class EmbeddingService:
@@ -236,8 +234,7 @@ class EmbeddingService:
 
             new_vec = np.array(new_embedding)
             days_since = (
-                get_now()
-                - (user.preferences_embedding_date_updated_at or get_now())
+                get_now() - (user.preferences_embedding_date_updated_at or get_now())
             ).days
 
             sim = np.dot(old_vec, new_vec) / (

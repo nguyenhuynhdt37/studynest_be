@@ -41,7 +41,7 @@ async def list_refund_requests(
         refund_status=refund_status,
         course_id=course_id,
         student_id=student_id,
-        instructor_id=reviewer.id,
+        instructor_id=instructor_id,
         date_from=date_from,
         date_to=date_to,
         order_by=order_by,
@@ -55,7 +55,7 @@ async def get_refund_request_detail(
     service: RefundService = Depends(),
     auth: AuthorizationService = Depends(),
 ):
-    user = await auth.require_role(["LECTURER"])
+    user = await auth.require_role(["ADMIN"])
     return await service.get_refund_request_detail_async(
         refund_id=refund_id,
         viewer_id=user.id,
@@ -74,11 +74,11 @@ async def lecturer_review_refund(
     service: RefundService = Depends(RefundService),
     notification_service: NotificationService = Depends(NotificationService),
 ):
-    lecturer = await auth.require_role(["LECTURER"])
+    await auth.require_role(["ADMIN"])
 
     return await service.review_refund_request_async(
         refund_id=refund_id,
-        reviewer_id=lecturer.id,
+        reviewer_id=None,
         role="ADMIN",
         action=body.action,
         reason=body.reason,

@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from io import BytesIO
 
 import pandas as pd
@@ -19,7 +18,8 @@ from app.db.models.database import (
     Wallets,
 )
 from app.db.sesson import get_session
-from app.libs.formats.datetime import now as get_now, to_utc_naive
+from app.libs.formats.datetime import now as get_now
+from app.libs.formats.datetime import to_utc_naive
 
 
 class LecturerService:
@@ -379,19 +379,19 @@ class LecturerService:
             "course_count": lecturer.course_count,
             "student_count": lecturer.student_count,
             "evaluated_count": lecturer.evaluated_count,
-            "rating_avg": float(lecturer.rating_avg or 0),
+            "rating_avg": round(float(lecturer.rating_avg or 0), 2),
             "instructor_description": lecturer.instructor_description,
             "create_at": lecturer.create_at,
             "update_at": lecturer.update_at,
             "is_verified_email": lecturer.is_verified_email,
             "wallet": {
-                "balance": float(wallet.balance or 0) if wallet else 0,
-                "total_in": float(wallet.total_in or 0) if wallet else 0,
-                "total_out": float(wallet.total_out or 0) if wallet else 0,
+                "balance": round(float(wallet.balance or 0), 2) if wallet else 0,
+                "total_in": round(float(wallet.total_in or 0), 2) if wallet else 0,
+                "total_out": round(float(wallet.total_out or 0), 2) if wallet else 0,
                 "last_transaction_at": wallet.last_transaction_at if wallet else None,
             },
             "upgrade_payment": {
-                "amount": float(upgrade.amount or 0) if upgrade else 0,
+                "amount": round(float(upgrade.amount or 0), 2) if upgrade else 0,
                 "paid_time": upgrade.paid_time if upgrade else None,
                 "payment_status": upgrade.payment_status if upgrade else None,
                 "verified_by": (
@@ -404,7 +404,7 @@ class LecturerService:
             "transactions": [
                 {
                     "id": str(tx.id),
-                    "amount": float(tx.amount),
+                    "amount": round(float(tx.amount), 2),
                     "type": tx.type,
                     "method": tx.method,
                     "status": tx.status,

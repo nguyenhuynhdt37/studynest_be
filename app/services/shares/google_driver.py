@@ -15,8 +15,8 @@ from app.core.settings import settings
 
 class GoogleDriveAsyncService:
     """
-    Phiên bản async-native của Google Drive Service (upload, share, folder).
-    Dùng factory async để khởi tạo thay vì async __init__.
+    Async Google Drive Service (Upload + Share)
+    Có log kiểm tra permission để phát hiện lỗi chặn chia sẻ.
     """
 
     SCOPES = [
@@ -27,7 +27,6 @@ class GoogleDriveAsyncService:
     TOKEN_PATH = "app/core/secret/token.json"
     CLIENT_SECRET_PATH = "app/core/secret/client_secret.json"
 
-    # ✅ __init__ phải luôn đồng bộ
     def __init__(self, creds: Optional[Credentials] = None):
         self.api_key = settings.GOOGLE_API_KEY
         self.base_url = "https://www.googleapis.com/drive/v3"
@@ -36,79 +35,80 @@ class GoogleDriveAsyncService:
         self._access_token: Optional[str] = creds.token if creds else None
 
     # ===========================================================
-    # 🏭 Factory method (chuẩn để khởi tạo async)
-    # ===========================================================
     @classmethod
     async def create(cls) -> "GoogleDriveAsyncService":
-        """Factory method async-safe."""
         self = cls()
         await self._authenticate()
         return self
 
     # ===========================================================
     async def _authenticate(self):
-        """Load hoặc refresh token, giống bên YouTubeAsyncService."""
+        """Tự động load token, tự refresh nếu hết hạn. Chỉ yêu cầu OAuth khi không còn refresh_token hợp lệ."""
         creds = None
 
+        # 1) Load token JSON nếu có
         if os.path.exists(self.TOKEN_PATH):
             try:
                 creds = Credentials.from_authorized_user_file(
                     self.TOKEN_PATH, self.SCOPES
                 )
+                logger.info("🔑 Đã load token Google thành công.")
             except Exception as e:
-                logger.warning(f"⚠️ Token lỗi hoặc sai định dạng: {e}")
+                logger.warning(f"⚠️ Token lỗi: {e}")
                 creds = None
 
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                logger.info("🔄 Token Google Drive đã được refresh.")
-            except RefreshError as e:
-                logger.warning(f"⚠️ Refresh token không hợp lệ, cần xác thực lại: {e}")
-                creds = None
+        # 2) Nếu có token + có refresh_token → tự refresh
+        if creds and creds.refresh_token:
+            if creds.expired:
+                try:
+                    logger.info("🔄 Token hết hạn → đang refresh access_token...")
+                    creds.refresh(Request())
+                    await self._save_token(creds)
+                    self.creds = creds
+                    self._access_token = creds.token
+                    return
+                except RefreshError as e:
+                    logger.warning(f"⚠️ Refresh token không hợp lệ: {e}")
+                    creds = None  # buộc xác thực lại
 
-        if not creds or not creds.valid:
-            if not os.path.exists(self.CLIENT_SECRET_PATH):
-                raise RuntimeError(
-                    "❌ Thiếu file client_secret.json để xác thực Google OAuth."
-                )
+            else:
+                # Token chưa hết hạn
+                logger.info("🔐 Token hợp lệ, không cần xác thực lại.")
+                self.creds = creds
+                self._access_token = creds.token
+                return
 
-            logger.info(
-                "🆕 Đang chạy xác thực Google OAuth lần đầu (Drive + YouTube)..."
-            )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                self.CLIENT_SECRET_PATH, self.SCOPES
-            )
-            creds = flow.run_local_server(port=8080, prompt="consent")
-            logger.success("✅ Xác thực thành công!")
+        # 3) Nếu không có refresh_token → yêu cầu OAuth 1 lần
+        logger.info("🆕 Không có refresh_token → chạy Google OAuth lần đầu...")
+        flow = InstalledAppFlow.from_client_secrets_file(
+            self.CLIENT_SECRET_PATH, self.SCOPES
+        )
+        creds = flow.run_local_server(port=8080, prompt="consent")
 
-        # giữ refresh_token cũ nếu cần
-        token_data = creds.to_json()
-        if '"refresh_token":' not in token_data and os.path.exists(self.TOKEN_PATH):
-            with open(self.TOKEN_PATH, "r") as f:
-                old = json.load(f)
-                if "refresh_token" in old:
-                    new = json.loads(token_data)
-                    new["refresh_token"] = old["refresh_token"]
-                    token_data = json.dumps(new)
-
-        os.makedirs(os.path.dirname(self.TOKEN_PATH) or ".", exist_ok=True)
-        with open(self.TOKEN_PATH, "w") as f:
-            f.write(token_data)
-
+        await self._save_token(creds)
         self.creds = creds
         self._access_token = creds.token
-        logger.info("💾 Token Google Drive đã được lưu thành công.")
+
+        logger.success("✅ Xác thực Google Drive thành công!")
+
+    async def _save_token(self, creds: Credentials):
+        """Lưu token + refresh_token vào file JSON."""
+        token_json = creds.to_json()
+        os.makedirs(os.path.dirname(self.TOKEN_PATH), exist_ok=True)
+
+        async with aiofiles.open(self.TOKEN_PATH, "w") as f:
+            await f.write(token_json)
+
+        logger.info("💾 Token Google Drive đã được lưu.")
 
     # ===========================================================
     async def _get_access_token(self) -> str:
-        """Trả về access_token, refresh nếu cần."""
         if self._access_token:
             return self._access_token
 
         creds = self.creds
         if creds.expired and creds.refresh_token:
-            logger.info("🔄 Refreshing expired access token...")
+            logger.info("🔄 Refresh token...")
             creds.refresh(Request())
             async with aiofiles.open(self.TOKEN_PATH, "w") as f:
                 await f.write(creds.to_json())
@@ -120,7 +120,6 @@ class GoogleDriveAsyncService:
 
     # ===========================================================
     async def ensure_folder(self, path: str) -> str:
-        """Đảm bảo thư mục tồn tại, tạo mới nếu thiếu."""
         access_token = await self._get_access_token()
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -141,6 +140,7 @@ class GoogleDriveAsyncService:
                     params={"q": query, "fields": "files(id,name)"},
                 )
                 folders = r.json().get("files", [])
+
                 if folders:
                     parent_id = folders[0]["id"]
                 else:
@@ -150,6 +150,7 @@ class GoogleDriveAsyncService:
                     }
                     if parent_id:
                         meta["parents"] = [parent_id]
+
                     r = await client.post(
                         f"{self.base_url}/files", headers=headers, data=json.dumps(meta)
                     )
@@ -165,14 +166,15 @@ class GoogleDriveAsyncService:
         content: bytes,
         mime_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Upload file ≤ 2GB (async-native, multipart)."""
+
         folder_path = "Elearn_Uploader/" + "/".join(path_parts)
         folder_id = await self.ensure_folder(folder_path)
+
         access_token = await self._get_access_token()
         mime_type = mime_type or "application/octet-stream"
 
         if len(content) > 2 * 1024 * 1024 * 1024:
-            raise ValueError("❌ File vượt quá giới hạn 2GB.")
+            raise ValueError("❌ File vượt quá 2GB.")
 
         headers = {"Authorization": f"Bearer {access_token}"}
         metadata = {"name": file_name, "parents": [folder_id]}
@@ -186,18 +188,25 @@ class GoogleDriveAsyncService:
             r = await client.post(
                 f"{self.upload_url}?uploadType=multipart", headers=headers, files=files
             )
+
             if r.status_code not in (200, 201):
                 raise RuntimeError(f"❌ Upload thất bại: {r.text}")
 
             data = r.json()
+
             return {
                 "id": data.get("id"),
                 "name": data.get("name"),
                 "webViewLink": f"https://drive.google.com/file/d/{data['id']}/view",
             }
 
+    # ===========================================================
     async def create_share_link(self, file_id: str) -> Dict[str, str]:
-        """Cấp quyền public view + trả về các link hiển thị."""
+        """
+        Tạo link xem công khai (anyone).
+        Có kiểm tra permission để biết Google có CHẶN share hay không.
+        """
+
         access_token = await self._get_access_token()
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -205,6 +214,7 @@ class GoogleDriveAsyncService:
         }
 
         async with httpx.AsyncClient(timeout=30) as client:
+            # Tạo permission public
             r = await client.post(
                 f"{self.base_url}/files/{file_id}/permissions",
                 headers=headers,
@@ -213,6 +223,17 @@ class GoogleDriveAsyncService:
 
             if r.status_code not in (200, 201):
                 raise RuntimeError(f"❌ Lỗi tạo permission: {r.text}")
+
+            # ❗ Kiểm tra permission thực sự
+            check = await client.get(
+                f"{self.base_url}/files/{file_id}",
+                headers=headers,
+                params={"fields": "permissions,owners"},
+            )
+            perm_info = check.json()
+
+            logger.info("📌 Kiểm tra permission sau khi cấp:")
+            logger.info(json.dumps(perm_info, indent=2))
 
         return {
             "view_link": f"https://drive.google.com/uc?id={file_id}",

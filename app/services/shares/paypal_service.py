@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 import httpx
+import jwt  # dùng để decode id_token
 
 from app.core.settings import settings
 from app.db.models.database import Transactions
@@ -22,7 +23,8 @@ class PayPalService:
     Service PayPal:
     - NẠP TIỀN: Redirect flow (Orders API)
     - RÚT TIỀN: Payouts API
-    - Token cache nội bộ
+    - LOGIN / CONNECT PAYPAL: OAuth2 (authorization_code + id_token)
+    - Token cache nội bộ cho Orders / Payouts
     """
 
     def __init__(self, http: httpx.AsyncClient, timeout: float = 30.0):
@@ -39,6 +41,12 @@ class PayPalService:
     # INTERNAL
     # =========================================================
     async def _ensure_token(self) -> str:
+        """
+        Lấy app access_token (client_credentials) dùng cho:
+        - Orders API
+        - Payouts API
+        KHÔNG dùng cho OAuth login.
+        """
         now = time.time()
         if self._access_token and now < self._token_expire_at - 15:
             return self._access_token
@@ -61,6 +69,11 @@ class PayPalService:
         return self._access_token
 
     def _headers(self) -> Dict[str, str]:
+        if not self._access_token:
+            # đề phòng dev quên gọi _ensure_token()
+            raise PayPalError(
+                "Access token chưa được khởi tạo. Gọi _ensure_token() trước."
+            )
         return {
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
@@ -232,7 +245,15 @@ class PayPalService:
 
         return resp.json()
 
-    async def oauth_exchange_code(self, code: str, redirect_uri: str):
+    # =========================================================
+    # OAUTH LOGIN – ĐỔI CODE LẤY TOKEN + ID_TOKEN
+    # =========================================================
+    async def oauth_exchange_code(self, code: str, redirect_uri: str) -> Dict[str, Any]:
+        """
+        Đổi authorization_code (trả về ở callback) sang:
+        - access_token (cho user)
+        - id_token (JWT OpenID chứa email, payer_id, name)
+        """
         url = f"{self.base_url}/v1/oauth2/token"
 
         data = {
@@ -246,13 +267,75 @@ class PayPalService:
             data=data,
             auth=(self.client_id, self.client_secret),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=self.default_timeout,
         )
         if resp.status_code != 200:
-            raise PayPalError(f"Exchange token lỗi: {resp.text}")
+            raise PayPalError(f"Exchange token lỗi: {resp.status_code} {resp.text}")
 
         return resp.json()
 
-    async def decode_id_token(self, id_token: str):
-        import jwt
-
+    @staticmethod
+    def decode_id_token(id_token: str) -> Dict[str, Any]:
+        """
+        Giải mã id_token (JWT) KHÔNG verify signature (sandbox / debug).
+        Khi production thì verify theo JWKs của PayPal.
+        """
         return jwt.decode(id_token, options={"verify_signature": False})
+
+    async def get_userinfo_from_code(   
+        self,
+        code: str,
+        redirect_uri: str,
+    ) -> Dict[str, Any]:
+        """
+        Chuẩn hóa lấy thông tin người dùng PayPal từ code:
+
+        - Trường hợp 1: Flow OpenID → có id_token → decode trực tiếp
+        - Trường hợp 2: Flow Merchant Onboarding → KHÔNG có id_token
+        → gọi /v1/identity/oauth2/userinfo lấy email + payer_id
+        """
+
+        token_data = await self.oauth_exchange_code(code, redirect_uri)
+
+        # Ưu tiên lấy từ id_token nếu có
+        id_token = token_data.get("id_token")
+
+        if id_token:
+            payload = self.decode_id_token(id_token)
+
+            return {
+                "email": payload.get("email"),
+                "payer_id": payload.get("payer_id") or payload.get("user_id"),
+                "name": payload.get("name"),
+                "raw_payload": payload,
+                "token_data": token_data,
+                "source": "id_token",
+            }
+
+        # ============================
+        # Fallback: Merchant Onboarding (no id_token)
+        # ============================
+
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise PayPalError("Không tìm thấy access_token trong phản hồi PayPal.")
+
+        # Gọi userinfo API
+        r = await self.http.get(
+            f"{self.base_url}/v1/identity/oauth2/userinfo?schema=openid",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+        if r.status_code != 200:
+            raise PayPalError(f"Lỗi gọi userinfo PayPal: {r.text}")
+
+        info = r.json()
+
+        return {
+            "email": info.get("email"),
+            "payer_id": info.get("user_id"),
+            "name": info.get("name"),
+            "raw_payload": info,
+            "token_data": token_data,
+            "source": "userinfo",
+        }

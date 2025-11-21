@@ -37,7 +37,7 @@ async def lecturer_get_transactions(
     date_to = await to_vietnam_naive(date_to)
     instructor = await authorization_service.require_role(["LECTURER"])
     # ============================
-    return await transactions_service.get_lecturer_transactions_with_details(
+    return await transactions_service.get_lecturer_transactions(
         instructor_id=instructor.id,
         page=page,
         limit=limit,
@@ -116,4 +116,20 @@ async def get_holding_courses(
         instructor_id=lecturer.id,
         search=search,
         limit=limit,
+    )
+
+
+@router.get("/{transaction_id}")
+async def get_lecturer_transaction_detail(
+    transaction_id: uuid.UUID,
+    authorization_service: AuthorizationService = Depends(AuthorizationService),
+    transactions_service: TransactionsService = Depends(TransactionsService),
+):
+    """
+    Lấy chi tiết giao dịch của GIẢNG VIÊN theo ID giao dịch
+    """
+    instructor = await authorization_service.require_role(["LECTURER"])
+    return await transactions_service.get_user_transaction_detail(
+        user_id=instructor.id,
+        transaction_id=transaction_id,
     )

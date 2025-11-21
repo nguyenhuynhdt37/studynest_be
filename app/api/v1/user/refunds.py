@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from app.core.deps import AuthorizationService
 from app.libs.formats.datetime import to_vietnam_naive
 from app.schemas.shares.refund import RefundRequestCreate
+from app.services.shares.notification import NotificationService
 from app.services.shares.refund import RefundService
 
 router = APIRouter(prefix="/users/refunds", tags=["User • Refunds"])
@@ -79,12 +80,14 @@ async def create_refund_request(
     body: RefundRequestCreate,
     service: RefundService = Depends(RefundService),
     authorization: AuthorizationService = Depends(AuthorizationService),
+    notification_service: NotificationService = Depends(NotificationService),
 ):
     user = await authorization.get_current_user()
     return await service.create_refund_request(
         user_id=user.id,
         purchase_item_id=body.purchase_item_id,
         reason=body.reason,
+        notification_service=notification_service,
     )
 
 
