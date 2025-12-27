@@ -158,3 +158,17 @@ async def get_courses_by_category(
         raise
     except Exception as e:
         raise HTTPException(500, f"Lỗi khi lấy danh sách khóa học theo category. {e}")
+
+
+@router.get("/{category_slug}/get_root_and_level1")
+async def get_root_and_level1_categories(
+    category_slug: str,
+    service: CategoryService = Depends(CategoryService),
+):
+    try:
+        return await service.get_root_and_level1_async(category_slug)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("❌ get_root_and_level1_categories route error:", e)
+        raise HTTPException(500, f"Lỗi khi lấy danh mục gốc và cấp 1. {e}")

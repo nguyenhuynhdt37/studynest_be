@@ -461,7 +461,7 @@ class TransactionsService:
                                 )
                                 self.db.add(dh)
 
-                    # ENROLL
+                    # ENROLL + CẬP NHẬT THỐNG KÊ
                     for pi in purchase_items:
                         existed = await self.db.scalar(
                             select(CourseEnrollments).where(
@@ -478,6 +478,37 @@ class TransactionsService:
                                 progress=Decimal("0"),
                             )
                             self.db.add(enroll)
+
+                            # ✅ CẬP NHẬT COURSES.TOTAL_ENROLLS
+                            course_to_update = await self.db.scalar(
+                                select(Courses).where(Courses.id == pi.course_id)
+                            )
+                            if course_to_update:
+                                course_to_update.total_enrolls = (
+                                    course_to_update.total_enrolls or 0
+                                ) + 1
+
+                                # ✅ CẬP NHẬT USER.STUDENT_COUNT CHO INSTRUCTOR
+                                # Chỉ tăng nếu user này chưa từng đăng ký bất kỳ khóa học nào của instructor
+                                instructor = await self.db.scalar(
+                                    select(User).where(User.id == course_to_update.instructor_id)
+                                )
+                                if instructor:
+                                    # Kiểm tra xem user đã là học viên của instructor này chưa
+                                    existing_enrollment_count = await self.db.scalar(
+                                        select(func.count())
+                                        .select_from(CourseEnrollments)
+                                        .join(Courses, Courses.id == CourseEnrollments.course_id)
+                                        .where(
+                                            CourseEnrollments.user_id == user.id,
+                                            Courses.instructor_id == instructor.id,
+                                        )
+                                    )
+                                    # Nếu đây là lần đầu (count = 0), tăng student_count
+                                    if existing_enrollment_count == 0:
+                                        instructor.student_count = (
+                                            instructor.student_count or 0
+                                        ) + 1
 
                 # NOTI (chỉ enroll, không ví)
                 try:
@@ -646,7 +677,7 @@ class TransactionsService:
                             discount_obj.updated_at = now
                             self.db.add(discount_obj)
 
-                # 5.5 ENROLL
+                # 5.5 ENROLL + CẬP NHẬT THỐNG KÊ
                 for pi in purchase_items:
                     existed = await self.db.scalar(
                         select(CourseEnrollments).where(
@@ -663,6 +694,37 @@ class TransactionsService:
                             progress=Decimal("0"),
                         )
                         self.db.add(enroll)
+
+                        # ✅ CẬP NHẬT COURSES.TOTAL_ENROLLS
+                        course_to_update = await self.db.scalar(
+                            select(Courses).where(Courses.id == pi.course_id)
+                        )
+                        if course_to_update:
+                            course_to_update.total_enrolls = (
+                                course_to_update.total_enrolls or 0
+                            ) + 1
+
+                            # ✅ CẬP NHẬT USER.STUDENT_COUNT CHO INSTRUCTOR
+                            # Chỉ tăng nếu user này chưa từng đăng ký bất kỳ khóa học nào của instructor
+                            instructor = await self.db.scalar(
+                                select(User).where(User.id == course_to_update.instructor_id)
+                            )
+                            if instructor:
+                                # Kiểm tra xem user đã là học viên của instructor này chưa
+                                existing_enrollment_count = await self.db.scalar(
+                                    select(func.count())
+                                    .select_from(CourseEnrollments)
+                                    .join(Courses, Courses.id == CourseEnrollments.course_id)
+                                    .where(
+                                        CourseEnrollments.user_id == user.id,
+                                        Courses.instructor_id == instructor.id,
+                                    )
+                                )
+                                # Nếu đây là lần đầu (count = 0), tăng student_count
+                                if existing_enrollment_count == 0:
+                                    instructor.student_count = (
+                                        instructor.student_count or 0
+                                    ) + 1
 
                 # 5.6 EARNINGS + PLATFORM WALLET (chỉ với khóa có tiền > 0)
                 for pi in purchase_items:

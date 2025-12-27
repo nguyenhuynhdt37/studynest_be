@@ -22,7 +22,7 @@ async def get_categories_flat(
     sort_order: str = "asc",  # asc | desc
     level: int | None = None,
 ):
-    await authorization.require_role(["ADMIN"])
+    await authorization.require_role(["ADMIN", "LECTURER"])
     return await service.get_categories_paginated_async(
         page=page,
         page_size=page_size,
@@ -39,7 +39,7 @@ async def get_parent_and_second_level_categories(
     service: CategoryService = Depends(CategoryService),
     authorization: AuthorizationService = Depends(AuthorizationService),
 ):
-    await authorization.require_role(["ADMIN"])
+    await authorization.require_role(["ADMIN", "LECTURER"])
     return await service.get_parent_and_second_level_categories()
 
 

@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding import EmbeddingService, get_embedding_service
@@ -188,12 +188,6 @@ class NotificationService:
                     "read_at": (
                         await to_utc_naive(notif.read_at) if notif.read_at else None
                     ),
-                    "is_clicked": notif.is_clicked,
-                    "clicked_at": (
-                        await to_utc_naive(notif.clicked_at)
-                        if notif.clicked_at
-                        else None
-                    ),
                     "created_at": await to_utc_naive(notif.created_at),
                     "updated_at": await to_utc_naive(notif.updated_at),
                 },
@@ -218,3 +212,63 @@ class NotificationService:
             logger.exception(f"[Notifications][WS] Lỗi WebSocket: {ws_err}")
 
         return notif
+
+    async def mark_all_as_read(self, user_id: str, role: str):
+        try:
+            stmt = (
+                update(Notifications)
+                .where(
+                    Notifications.user_id == user_id,
+                    Notifications.is_read.is_(False),
+                    or_(
+                        func.cardinality(Notifications.role_target)
+                        == 0,  # thông báo chung
+                        Notifications.role_target.op("@>")([role]),  # chứa role
+                    ),
+                )
+                .values(
+                    is_read=True,
+                    read_at=get_now(),
+                )
+            )
+
+            await self.db.execute(stmt)
+            await self.db.commit()
+
+        except Exception as e:
+            await self.db.rollback()
+            raise e
+
+    async def mark_as_read(self, notification_id: uuid.UUID, user_id: uuid.UUID):
+        try:
+            stmt = (
+                update(Notifications)
+                .where(
+                    Notifications.id == notification_id,
+                    Notifications.user_id == user_id,
+                    Notifications.is_read.is_(False),  # chỉ update khi chưa đọc
+                )
+                .values(
+                    is_read=True,
+                    read_at=get_now(),
+                )
+                .returning(Notifications.id)
+            )
+
+            result = await self.db.execute(stmt)
+            updated_id = result.scalar_one_or_none()
+
+            # Không tìm thấy hoặc không phải owner -> coi như không làm gì
+            if not updated_id:
+                raise HTTPException(404, "Thông báo không tồn tại hoặc đã được đọc.")
+
+            await self.db.commit()
+            return {
+                "success": True,
+                "message": "Đã đánh dấu đã đọc.",
+                "id": str(updated_id),
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            raise e

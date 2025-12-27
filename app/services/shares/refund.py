@@ -769,8 +769,37 @@ class RefundService:
                             earnings.available_at = None
                             earnings.updated_at = now
 
-                        # Thu hồi enroll
+                        # Thu hồi enroll + CẬP NHẬT THỐNG KÊ
                         if enrollment:
+                            # ✅ GIẢM COURSES.TOTAL_ENROLLS
+                            if course:
+                                course.total_enrolls = max(
+                                    (course.total_enrolls or 1) - 1, 0
+                                )
+
+                            # ✅ GIẢM USER.STUDENT_COUNT CHO INSTRUCTOR
+                            # Chỉ giảm nếu user không còn enroll bất kỳ khóa học nào khác của instructor
+                            instructor = await self.db.scalar(
+                                select(User).where(User.id == course.instructor_id)
+                            )
+                            if instructor:
+                                # Đếm số enrollment còn lại của user với instructor này (trừ course hiện tại)
+                                remaining_enrollments = await self.db.scalar(
+                                    select(func.count())
+                                    .select_from(CourseEnrollments)
+                                    .join(Courses, Courses.id == CourseEnrollments.course_id)
+                                    .where(
+                                        CourseEnrollments.user_id == student_user.id,
+                                        Courses.instructor_id == instructor.id,
+                                        CourseEnrollments.course_id != purchase.course_id,
+                                    )
+                                )
+                                # Nếu không còn enrollment nào khác, giảm student_count
+                                if remaining_enrollments == 0:
+                                    instructor.student_count = max(
+                                        (instructor.student_count or 1) - 1, 0
+                                    )
+
                             await self.db.delete(enrollment)
 
                     # notify học viên
@@ -893,8 +922,37 @@ class RefundService:
                             earnings.available_at = None
                             earnings.updated_at = now
 
-                        # Thu hồi enroll
+                        # Thu hồi enroll + CẬP NHẬT THỐNG KÊ
                         if enrollment:
+                            # ✅ GIẢM COURSES.TOTAL_ENROLLS
+                            if course:
+                                course.total_enrolls = max(
+                                    (course.total_enrolls or 1) - 1, 0
+                                )
+
+                            # ✅ GIẢM USER.STUDENT_COUNT CHO INSTRUCTOR
+                            # Chỉ giảm nếu user không còn enroll bất kỳ khóa học nào khác của instructor
+                            instructor = await self.db.scalar(
+                                select(User).where(User.id == course.instructor_id)
+                            )
+                            if instructor:
+                                # Đếm số enrollment còn lại của user với instructor này (trừ course hiện tại)
+                                remaining_enrollments = await self.db.scalar(
+                                    select(func.count())
+                                    .select_from(CourseEnrollments)
+                                    .join(Courses, Courses.id == CourseEnrollments.course_id)
+                                    .where(
+                                        CourseEnrollments.user_id == student_user.id,
+                                        Courses.instructor_id == instructor.id,
+                                        CourseEnrollments.course_id != purchase.course_id,
+                                    )
+                                )
+                                # Nếu không còn enrollment nào khác, giảm student_count
+                                if remaining_enrollments == 0:
+                                    instructor.student_count = max(
+                                        (instructor.student_count or 1) - 1, 0
+                                    )
+
                             await self.db.delete(enrollment)
 
                     if notification_service:

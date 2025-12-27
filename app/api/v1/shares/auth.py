@@ -1,7 +1,13 @@
 from fastapi import APIRouter, Body, Depends, Response, status
 
 from app.core.deps import AuthorizationService
-from app.schemas.auth.user import LoginUser, RefreshEmail, UserCreate, VerifyEmail
+from app.schemas.auth.user import (
+    GoogleLogin,
+    LoginUser,
+    RefreshEmail,
+    UserCreate,
+    VerifyEmail,
+)
 from app.services.shares.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -66,3 +72,18 @@ async def check_is_login(
     if user:
         return {"message": "account is login"}
     return {"message": "account is not login"}
+
+
+@router.post("/google")
+async def login_with_google(
+    res: Response,
+    body: GoogleLogin = Body(),
+    service: AuthService = Depends(AuthService),
+):
+    """
+    Login bằng Google:
+    - body.credential: ID token (credential) từ Google Identity Services gửi lên.
+    - Nếu user chưa có -> tạo mới + gán role USER + is_verified_email = True.
+    - Trả về cookie access_token giống login thường.
+    """
+    return await service.login_google_async(body, res)

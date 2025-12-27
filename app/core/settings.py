@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = ""
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
-    POSTGRES_HOST: str = "localhost"
+    POSTGRES_HOST: str = "127.0.0.1"
     POSTGRES_PORT: int = 5432
     DATABASE_ASYNC_URL: str = ""
 
@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     GOOGLE_ROOT_FOLDER_ID: str = ""
     GOOGLE_CREDENTIALS_PATH: str = ""
     GOOGLE_API_KEY_CHAT: str = ""
+    GOOGLE_API_CLIENT_ID_LOGIN_GOOGLE: str = ""
+    GOOGLE_API_SECRET_ID_LOGIN_GOOGLE: str = ""
 
     HF_TOKEN: str = ""
 

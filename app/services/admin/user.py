@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from io import BytesIO
 from operator import and_
 from typing import Optional
@@ -12,8 +11,11 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models.database import CourseEnrollments, Role, User, UserRoles
 from app.db.sesson import get_session
-from app.libs.formats.datetime import now as get_now, to_utc_naive
+from app.libs.formats.datetime import now as get_now
+from app.libs.formats.datetime import to_utc_naive
 from app.schemas.auth.user import BlockUser, EditUser
+from app.schemas.shares.notification import NotificationCreateSchema
+from app.services.shares.notification import NotificationService
 
 
 class UserService:
@@ -355,13 +357,27 @@ class UserService:
             if schema.is_block_permanently:
                 user.banned_until = None
             else:
-                user.banned_until = to_utc_naive(
+                user.banned_until = await to_utc_naive(
                     schema.banned_until or get_now()
                 )
-            user.update_at = to_utc_naive(schema.banned_until or get_now())
+            user.update_at = await to_utc_naive(get_now())
 
             await self.db.commit()
             await self.db.refresh(user)
+
+            # ✅ GỬI THÔNG BÁO CHO USER
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=user.id,
+                    title="⚠️ Tài khoản của bạn bị tạm khóa",
+                    content=f"Tài khoản của bạn đã bị tạm khóa. Lý do: {schema.banned_reason or 'Không có lý do cụ thể'}.",
+                    type="account",
+                    role_target=["USER"],
+                    url="/support",
+                )
+            )
+
             return {"message": "Đã chặn người dùng thành công"}
 
         except HTTPException:
@@ -417,6 +433,20 @@ class UserService:
 
             await self.db.commit()
             await self.db.refresh(user)
+
+            # ✅ GỬI THÔNG BÁO CHO USER
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=user.id,
+                    title="✅ Tài khoản của bạn đã được mở khóa",
+                    content="Tài khoản của bạn đã được mở khóa. Bạn có thể tiếp tục sử dụng dịch vụ.",
+                    type="account",
+                    role_target=["USER"],
+                    url="/",
+                )
+            )
+
             return {"message": "Đã mở chặn người dùng thành công"}
 
         except HTTPException:

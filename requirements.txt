@@ -7,6 +7,7 @@ python-multipart>=0.0.9
 pydantic>=2.8
 pydantic-settings>=2.7
 psycopg2-binary
+psycopg[binary]
 
 # === Database & ORM ===
 SQLAlchemy[asyncio]>=2.0.35
@@ -31,6 +32,10 @@ google-auth-httplib2>=0.2
 google-auth-oauthlib>=1.2
 tiktoken>=0.7
 isodate>=0.6
+langchain-google-genai>=2.0.0
+langchain-text-splitters>=0.3.0
+langchain-core>=0.3.0
+
 
 # === Data & Utils ===
 faker>=26
@@ -58,8 +63,6 @@ loguru>=0.7
 youtube-transcript-api
 
 
-opencv-python-headless
-mediapipe
-face_recognition
 
 apscheduler
+google-auth

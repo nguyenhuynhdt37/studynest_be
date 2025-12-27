@@ -4,7 +4,7 @@ from sqlalchemy.engine import URL
 
 PG_USER = "admin"
 PG_PASS = "Admin1234"  # nếu pg_hba dùng trust, có thể bỏ qua mật khẩu
-PG_HOST = "localhost"
+PG_HOST = "127.0.0.1"
 PG_PORT = 5432
 DB_NAME = "study_nest"
 

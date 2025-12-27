@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  piston_api:
+    image: nguyenhuynh04/piston-api:v1.0.0-arm64
+    container_name: piston_api
+    restart: unless-stopped
+    read_only: false
+    ports:
+      - "4000:4000"
+    platform: linux/arm64
+    volumes:
+      - piston_isolate:/isolate
+
+volumes:
+  piston_isolate:
+

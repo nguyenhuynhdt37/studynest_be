@@ -16,7 +16,11 @@ class ProfileService:
         self.db = db
         self.llm_service = llm_service
 
-    async def create_bio_async(self, schema: CreateBioSchema, user: User):
+    async def create_bio_async(self, schema: CreateBioSchema, user: User) -> str:
+        """
+        Tạo bio cho học viên.
+        Trả về: text thuần (markdown string)
+        """
         try:
             prompt = f"""
             Bạn là chuyên gia viết hồ sơ học viên (student bio) cho nền tảng học trực tuyến — giống như Udemy hoặc Coursera.
@@ -41,7 +45,7 @@ class ProfileService:
             - Viết bằng tiếng Việt.
             - Độ dài khoảng 3–5 câu.
             - Cho phép dùng Markdown nhẹ (**in đậm**, *in nghiêng*).
-            - Không thêm tiêu đề “Giới thiệu”, không chèn emoji hay HTML.
+            - Không thêm tiêu đề "Giới thiệu", không chèn emoji hay HTML.
             - Tập trung vào hành trình học tập, động lực và mục tiêu phát triển của học viên.
 
             Ví dụ đầu ra mong muốn (Markdown):
@@ -50,7 +54,8 @@ class ProfileService:
             Mục tiêu của tôi là trở thành lập trình viên giỏi và có thể đóng góp vào các sản phẩm ý nghĩa cho cộng đồng.
             """
 
-            return await self.llm_service.call_model(prompt, temperature=0.7)
+            result = await self.llm_service.call_model(prompt, temperature=0.7)
+            return result.strip()
 
         except Exception as e:
             await self.db.rollback()

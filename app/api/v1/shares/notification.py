@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from loguru import logger
 
@@ -128,3 +130,44 @@ async def get_admin_notifications(
         sort_by=sort_by,
         order_dir=order_dir,
     )
+
+
+@router.post("/read-all/user")
+async def read_all_notifications(
+    service: NotificationService = Depends(NotificationService),
+    authorization_service: AuthorizationService = Depends(AuthorizationService),
+):
+    user = await authorization_service.get_current_user()
+    ok = await service.mark_all_as_read(str(user.id), "USER")
+    return {"success": ok}
+
+
+@router.post("/read-all/lecturer")
+async def read_all_notifications_lecturer(
+    service: NotificationService = Depends(NotificationService),
+    authorization_service: AuthorizationService = Depends(AuthorizationService),
+):
+    user = await authorization_service.require_role(["LECTURER"])
+    ok = await service.mark_all_as_read(str(user.id), "LECTURER")
+    return {"success": ok}
+
+
+@router.post("/read-all/admin")
+async def read_all_notifications_admin(
+    service: NotificationService = Depends(NotificationService),
+    authorization_service: AuthorizationService = Depends(AuthorizationService),
+):
+    user = await authorization_service.require_role(["ADMIN"])
+    ok = await service.mark_all_as_read(str(user.id), "ADMIN")
+    return {"success": ok}
+
+
+@router.post("/read/{notification_id}")
+async def read_notification(
+    notification_id: UUID,
+    service: NotificationService = Depends(NotificationService),
+    authorization_service: AuthorizationService = Depends(AuthorizationService),
+):
+    user = await authorization_service.get_current_user()
+    updated = await service.mark_as_read(notification_id, user.id)
+    return updated

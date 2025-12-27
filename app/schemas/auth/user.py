@@ -52,3 +52,7 @@ class BlockUser(BaseModel):
     is_block_permanently: bool = False
     banned_reason: str
     banned_until: datetime | None
+
+
+class GoogleLogin(BaseModel):
+    credential: str

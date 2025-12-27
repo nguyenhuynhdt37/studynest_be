@@ -40,8 +40,10 @@ from app.api.v1.user import category, favorites, learning, user_preferences, wal
 from app.api.v1.user import course_enroll as course_enroll
 from app.api.v1.user import courses as user_courses
 from app.api.v1.user import discounts as user_discounts
+from app.api.v1.user import lecturer as user_lecturer
 from app.api.v1.user import refunds as user_refunds
 from app.api.v1.user import transaction as user_transaction
+from app.api.v1.user import tutor_chat as user_tutor_chat
 from app.core.scheduler import scheduler, start_scheduler
 
 # --- MIDDLEWARE ---
@@ -92,6 +94,7 @@ app = FastAPI(
     description="Backend demo với cấu hình trong main.py",
     version="0.1.0",
     lifespan=lifespan,
+    swagger_ui_parameters={"withCredentials": True},  # 🔑 Cho phép Swagger gửi cookie
 )
 
 # --- CORS ---
@@ -136,6 +139,8 @@ app.include_router(user_preferences.router, prefix=prefix)
 app.include_router(user_transaction.router, prefix=prefix)
 app.include_router(user_discounts.router, prefix=prefix)
 app.include_router(user_refunds.router, prefix=prefix)
+app.include_router(user_lecturer.router, prefix=prefix)
+app.include_router(user_tutor_chat.router, prefix=prefix)
 
 # --- LECTURER ROUTES ---
 app.include_router(lecturer_courses.router, prefix=prefix)

@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from fastapi import BackgroundTasks, Depends, HTTPException
-from sqlalchemy import UUID, cast, exists, func, literal_column, select, text
+from sqlalchemy import cast, func, literal_column, select
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -123,8 +124,62 @@ class CoursePublicService:
                 "wishlist",
                 course_id,
             )
+            await self.db.flush()
+
+            # ✅ CẬP NHẬT THỐNG KÊ RATING CHO KHÓA HỌC
+            # Tính lại rating_avg dựa trên tất cả review
+            rating_stats = await self.db.execute(
+                select(
+                    func.avg(CourseReviews.rating).label("avg_rating"),
+                    func.count(CourseReviews.id).label("count")
+                ).where(CourseReviews.course_id == course_id)
+            )
+            stats_row = rating_stats.first()
+            if stats_row:
+                from decimal import Decimal
+                new_avg = Decimal(str(round(stats_row.avg_rating or 0, 2)))
+                new_count = stats_row.count or 0
+
+                course.rating_avg = new_avg
+                course.rating_count = new_count
+                course.total_reviews = new_count
+
+            # ✅ CẬP NHẬT EVALUATED_COUNT CHO INSTRUCTOR
+            instructor = await self.db.scalar(
+                select(User).where(User.id == course.instructor_id)
+            )
+            if instructor:
+                instructor.evaluated_count = (instructor.evaluated_count or 0) + 1
+
+                # Tính lại rating_avg của instructor (trung bình rating của tất cả khóa học)
+                instructor_rating_stats = await self.db.execute(
+                    select(func.avg(Courses.rating_avg).label("avg"))
+                    .where(
+                        Courses.instructor_id == instructor.id,
+                        Courses.rating_avg.isnot(None),
+                        Courses.rating_count > 0,
+                    )
+                )
+                instructor_avg_row = instructor_rating_stats.first()
+                if instructor_avg_row and instructor_avg_row.avg:
+                    instructor.rating_avg = round(float(instructor_avg_row.avg), 2)
+
             await self.db.commit()
             await self.db.refresh(new_course_review)
+
+            # ✅ GỬI THÔNG BÁO CHO INSTRUCTOR KHI CÓ ĐÁNH GIÁ MỚI
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=course.instructor_id,
+                    title="⭐ Có đánh giá mới cho khóa học",
+                    content=f"Học viên {user.fullname or 'Ẩn danh'} đã đánh giá {schema.rating}⭐ cho khóa học \"{course.title}\".",
+                    type="course",
+                    role_target=["LECTURER"],
+                    url=f"/lecturer/courses/{course.id}/reviews",
+                    metadata={"course_id": str(course.id), "review_id": str(new_course_review.id)}
+                )
+            )
 
             return {
                 "message": "Đánh giá khóa học thành công",
@@ -355,8 +410,8 @@ class CoursePublicService:
                                     "position": lesson.position,
                                     "is_preview": lesson.is_preview,
                                     "duration": (
-                                        video_map.get(lesson.id).duration
-                                        if video_map.get(lesson.id) is not None
+                                        video_map.get(lesson.id, None).duration
+                                        if video_map.get(lesson.id, None) is not None
                                         else None
                                     ),
                                 }
@@ -425,132 +480,6 @@ class CoursePublicService:
             await self.db.rollback()
             raise HTTPException(500, f"Lỗi khi lấy nhưng khóa học xem trước: {str(e)}")
 
-    async def get_related_courses_async(
-        self,
-        course_id: uuid.UUID,
-        limit: int = 4,
-        cursor: str | None = None,  # dùng làm offset
-        user: User | None = None,
-    ):
-        now = get_now()
-        offset = int(cursor) if cursor and cursor.isdigit() else 0
-
-        # 1️⃣ Lấy dữ liệu thống kê để tính tag
-        stmt_all = select(
-            Courses.views, Courses.total_enrolls, Courses.rating_avg
-        ).where(Courses.is_published.is_(True))
-        data = (await self.db.execute(stmt_all)).mappings().all()
-        if not data:
-            return {"items": [], "next_cursor": None}
-
-        views_cutoff = np.percentile([r["views"] or 0 for r in data], 80)
-        enrolls_cutoff = np.percentile([r["total_enrolls"] or 0 for r in data], 80)
-        rating_cutoff = np.percentile([float(r["rating_avg"] or 0) for r in data], 80)
-
-        # 2️⃣ Lấy khóa học hiện tại
-        course = await self.db.get(Courses, course_id)
-        if course is None:
-            raise HTTPException(status_code=404, detail="Khóa học không tồn tại")
-
-        if (
-            course.embedding is None
-            or not isinstance(course.embedding, (list, np.ndarray))
-            or len(course.embedding) != 3072
-        ):
-            raise HTTPException(status_code=400, detail="Khóa học chưa có embedding")
-
-        # 3️⃣ Tính similarity với embedding hiện tại
-        course_embedding = (
-            course.embedding.tolist()
-            if hasattr(course.embedding, "tolist")
-            else course.embedding
-        )
-        embedding_str = "[" + ",".join(f"{x:.8f}" for x in course_embedding) + "]"
-        similarity_expr = text(
-            f"(1 - cosine_distance(public.courses.embedding, '{embedding_str}'::vector)) AS similarity"
-        )
-
-        # 4️⃣ Query khóa học liên quan (theo similarity)
-        if user is not None:
-            # Loại bỏ khóa học user đã ghi danh
-            subq = select(CourseEnrollments.id).where(
-                CourseEnrollments.course_id == Courses.id,
-                CourseEnrollments.user_id == user.id,
-            )
-            stmt_page = (
-                select(Courses, similarity_expr)
-                .options(selectinload(Courses.instructor))
-                .where(
-                    Courses.is_published.is_(True),
-                    ~exists(subq),
-                    Courses.embedding.is_not(None),
-                    Courses.id != course_id,
-                )
-                .order_by(text("similarity DESC NULLS LAST"), Courses.id.desc())
-                .offset(offset)
-                .limit(limit + 1)
-            )
-        else:
-            stmt_page = (
-                select(Courses, similarity_expr)
-                .options(selectinload(Courses.instructor))
-                .where(
-                    Courses.is_published.is_(True),
-                    Courses.embedding.is_not(None),
-                    Courses.id != course_id,
-                )
-                .order_by(text("similarity DESC NULLS LAST"), Courses.id.desc())
-                .offset(offset)
-                .limit(limit + 1)
-            )
-
-        # 5️⃣ Thực thi truy vấn
-        result_page = await self.db.execute(stmt_page)
-        rows = result_page.all()  # (Courses, similarity)
-
-        # 6️⃣ Pagination
-        has_next = len(rows) == limit + 1
-        if has_next:
-            rows = rows[:-1]
-            next_cursor = str(offset + limit)
-        else:
-            next_cursor = None
-
-        courses = [r[0] for r in rows]
-
-        # 7️⃣ Gắn tag cho từng khóa học
-        seven_days_ago = now - timedelta(days=7)
-        items = []
-        for c in courses:
-            tags = []
-            if (c.views or 0) >= views_cutoff:
-                tags.append("thịnh hành")
-            if (c.total_enrolls or 0) >= enrolls_cutoff:
-                tags.append("bán chạy nhất")
-            if (c.rating_avg or 0) >= rating_cutoff:
-                tags.append("được yêu thích")
-            if c.created_at and strip_tz(c.created_at) >= seven_days_ago:
-                tags.append("mới ra mắt")
-
-            items.append(
-                {
-                    "id": str(c.id),
-                    "title": c.title,
-                    "instructor_id": c.instructor.id if c.instructor else None,
-                    "instructor_full_name": (
-                        c.instructor.fullname if c.instructor else None
-                    ),
-                    "thumbnail_url": c.thumbnail_url,
-                    "rating": float(c.rating_avg or 0),
-                    "total_enrolls": int(c.total_enrolls or 0),
-                    "views": int(c.views or 0),
-                    "price": float(c.base_price or 0),
-                    "tags": tags,
-                }
-            )
-
-        return {"items": items, "next_cursor": next_cursor}
-
     async def enroll_in_course_async(
         self,
         course_id: uuid.UUID,
@@ -593,6 +522,31 @@ class CoursePublicService:
                     user_id=user.id,
                 )
                 self.db.add(enroll)
+                await self.db.flush()
+
+                # ✅ CẬP NHẬT COURSES.TOTAL_ENROLLS
+                course.total_enrolls = (course.total_enrolls or 0) + 1
+
+                # ✅ CẬP NHẬT USER.STUDENT_COUNT CHO INSTRUCTOR
+                # Chỉ tăng nếu user này chưa từng đăng ký bất kỳ khóa học nào của instructor
+                instructor = await self.db.scalar(
+                    select(User).where(User.id == course.instructor_id)
+                )
+                if instructor:
+                    # Kiểm tra xem user đã là học viên của instructor này chưa
+                    existing_enrollment_count = await self.db.scalar(
+                        select(func.count())
+                        .select_from(CourseEnrollments)
+                        .join(Courses, Courses.id == CourseEnrollments.course_id)
+                        .where(
+                            CourseEnrollments.user_id == user.id,
+                            Courses.instructor_id == instructor.id,
+                        )
+                    )
+                    # Nếu đây là lần đầu (count = 1, vì vừa flush enroll mới), tăng student_count
+                    if existing_enrollment_count == 1:
+                        instructor.student_count = (instructor.student_count or 0) + 1
+
                 await self.db.commit()
 
                 # =====================================================
@@ -741,11 +695,14 @@ class CoursePublicService:
 
             rows = (await self.db.execute(stmt)).scalars().all()
 
-            # 5) Next cursor
-            if len(rows) == limit + 1:
-                edge = rows[-1]
+            # 5) Next cursor - lấy từ item cuối được trả về
+            has_more = len(rows) == limit + 1
+            if has_more:
+                rows = rows[:-1]  # Cắt bớt item thừa trước
+            
+            if has_more and rows:
+                edge = rows[-1]  # Lấy item cuối ĐƯỢC TRẢ VỀ
                 next_cursor = f"{int(edge.total_enrolls or 0)}|{edge.id}"
-                rows = rows[:-1]
             else:
                 next_cursor = None
 
@@ -773,6 +730,7 @@ class CoursePublicService:
                         "thumbnail": c.thumbnail_url,
                         "base_price": c.base_price,
                         "views": int(c.views or 0),
+                        "slug": c.slug,
                         "rating": float(c.rating_avg or 0),
                         "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
@@ -873,11 +831,14 @@ class CoursePublicService:
 
             rows = (await self.db.execute(stmt)).scalars().all()
 
-            # 7) Next cursor
-            if len(rows) == limit + 1:
-                edge = rows[-1]
+            # 7) Next cursor - lấy từ item cuối được trả về
+            has_more = len(rows) == limit + 1
+            if has_more:
+                rows = rows[:-1]  # Cắt bớt item thừa trước
+            
+            if has_more and rows:
+                edge = rows[-1]  # Lấy item cuối ĐƯỢC TRẢ VỀ
                 next_cursor = f"{int(edge.views or 0)}|{edge.id}"
-                rows = rows[:-1]
             else:
                 next_cursor = None
 
@@ -905,6 +866,7 @@ class CoursePublicService:
                         "thumbnail": c.thumbnail_url,
                         "base_price": c.base_price,
                         "views": int(c.views or 0),
+                        "slug": c.slug,
                         "rating": float(c.rating_avg or 0),
                         "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
@@ -1001,11 +963,14 @@ class CoursePublicService:
 
             rows = (await self.db.execute(stmt)).scalars().all()
 
-            # 5) Next cursor
-            if len(rows) == limit + 1:
-                edge = rows[-1]
+            # 5) Next cursor - lấy từ item cuối được trả về
+            has_more = len(rows) == limit + 1
+            if has_more:
+                rows = rows[:-1]  # Cắt bớt item thừa trước
+            
+            if has_more and rows:
+                edge = rows[-1]  # Lấy item cuối ĐƯỢC TRẢ VỀ
                 next_cursor = f"{edge.created_at.isoformat()}|{edge.id}"
-                rows = rows[:-1]
             else:
                 next_cursor = None
 
@@ -1033,6 +998,7 @@ class CoursePublicService:
                         "thumbnail": c.thumbnail_url,
                         "base_price": c.base_price,
                         "views": int(c.views or 0),
+                        "slug": c.slug,
                         "rating": float(c.rating_avg or 0),
                         "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
@@ -1130,11 +1096,14 @@ class CoursePublicService:
 
             rows = (await self.db.execute(stmt)).scalars().all()
 
-            # 5) Next cursor
-            if len(rows) == limit + 1:
-                edge = rows[-1]
+            # 5) Next cursor - lấy từ item cuối được trả về
+            has_more = len(rows) == limit + 1
+            if has_more:
+                rows = rows[:-1]  # Cắt bớt item thừa trước
+            
+            if has_more and rows:
+                edge = rows[-1]  # Lấy item cuối ĐƯỢC TRẢ VỀ
                 next_cursor = f"{float(edge.rating_avg or 0)}|{edge.id}"
-                rows = rows[:-1]
             else:
                 next_cursor = None
 
@@ -1162,6 +1131,7 @@ class CoursePublicService:
                         "thumbnail": c.thumbnail_url,
                         "base_price": c.base_price,
                         "views": int(c.views or 0),
+                        "slug": c.slug,
                         "rating_avg": float(c.rating_avg or 0),
                         "enrolls": int(c.total_enrolls or 0),
                         "tags": tags,
@@ -1192,11 +1162,10 @@ class CoursePublicService:
                 literal_column("instructor_id"),
                 literal_column("instructor_name"),
                 literal_column("instructor_avatar"),
+                literal_column("course_slug"),
                 literal_column("similarity"),
             ).select_from(
-                func.fn_recommend_top20(
-                    cast(literal_column(f"'{user_id}'"), UUID)  # ⬅ FIX QUAN TRỌNG NHẤT
-                )
+                func.fn_recommend_top20(cast(literal_column(f"'{user_id}'"), UUID))
             )
 
             rows = (await self.db.execute(stmt)).mappings().all()
@@ -1207,6 +1176,7 @@ class CoursePublicService:
                         "id": str(r["course_id"]),
                         "title": r["course_title"],
                         "thumbnail": r["course_thumbnail"],
+                        "slug": r["course_slug"],
                         "instructor": {
                             "id": str(r["instructor_id"]),
                             "name": r["instructor_name"],
@@ -1220,4 +1190,4 @@ class CoursePublicService:
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, f"Lỗi recommend: {e}")
+            raise e

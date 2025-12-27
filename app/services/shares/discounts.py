@@ -539,14 +539,19 @@ class DiscountService:
 
             targets = target_map.get(d.id, {"course_ids": set(), "category_ids": set()})
 
-            can_apply = False
-            for c in courses:
-                if (
-                    c.id in targets["course_ids"]
-                    or course_categories[c.id] in targets["category_ids"]
-                ):
-                    can_apply = True
-                    break
+            # ✅ Mã global/all áp dụng cho tất cả khóa học
+            if d.applies_to in ["global", "all"]:
+                can_apply = True
+            else:
+                # Mã course/category cần check targets
+                can_apply = False
+                for c in courses:
+                    if (
+                        c.id in targets["course_ids"]
+                        or course_categories[c.id] in targets["category_ids"]
+                    ):
+                        can_apply = True
+                        break
 
             if not can_apply:
                 continue
@@ -560,10 +565,14 @@ class DiscountService:
             max_reduce = 0
 
             for c in courses:
-                if (
-                    c.id in targets["course_ids"]
+                # ✅ Mã global/all áp dụng cho tất cả courses
+                applies_to_course = (
+                    discount.applies_to in ["global", "all"]
+                    or c.id in targets["course_ids"]
                     or course_categories[c.id] in targets["category_ids"]
-                ):
+                )
+                
+                if applies_to_course:
                     if discount.discount_type == "percent":
                         reduced = float(c.base_price or 0) * (
                             float(discount.percent_value or 0) / 100

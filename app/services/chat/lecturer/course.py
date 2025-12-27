@@ -1,5 +1,6 @@
+import json
+
 from fastapi import Depends, HTTPException
-from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm import LLMService
@@ -22,7 +23,11 @@ class CourseService:
 
     async def create_short_description_async(
         self, schema: CreateShortCourseDescriptionSchema
-    ):
+    ) -> str:
+        """
+        Tạo mô tả ngắn gọn cho khóa học.
+        Trả về: text thuần (plain string, KHÔNG markdown)
+        """
         try:
             prompt = f"""
                 Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
@@ -37,15 +42,32 @@ class CourseService:
                 - Trình bày rõ mục tiêu, kiến thức và kỹ năng đạt được, cùng với ứng dụng thực tế của khóa học.
                 - Văn phong tự nhiên, dễ hiểu, mang tính truyền cảm hứng.
                 - Chỉ trả về nội dung mô tả thuần văn bản, không dùng ký hiệu Markdown hoặc thẻ định dạng.
+                - KHÔNG ĐƯỢC trả về dạng JSON array hoặc object, chỉ trả về chuỗi văn bản thuần túy.
                 """
 
-            return await self.llm_service.call_model(prompt)
+            result = await self.llm_service.call_model(prompt)
+            text = result.strip()
+            
+            # Xử lý nếu LLM trả về JSON array
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        text = parsed[0] if isinstance(parsed[0], str) else str(parsed[0])
+                except json.JSONDecodeError:
+                    pass
+            
+            return text
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, detail=f"❌ Tạo mô tả chủ đề thất bại: {e}")
+            raise HTTPException(500, detail=f"❌ Tạo mô tả ngắn thất bại: {e}")
 
-    async def create_description_async(self, schema: CreateCourseDescriptionSchema):
+    async def create_description_async(self, schema: CreateCourseDescriptionSchema) -> str:
+        """
+        Tạo mô tả chi tiết khóa học.
+        Trả về: text thuần (markdown string)
+        """
         try:
             prompt = f"""
                 Bạn là chuyên gia đào tạo trong lĩnh vực **viết nội dung cho các khóa học trực tuyến.**.
@@ -75,15 +97,37 @@ class CourseService:
                 - không được trả ra dạng json {{"description": "nội dung mô tả"}} mà hãy trả ra đúng phần mô tả thôi
                 """
             result = await self.llm_service.call_model(prompt)
-            return PlainTextResponse(result, media_type="text/markdown")
+            text = result.strip()
+            
+            # Xử lý nếu LLM trả về JSON array
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        text = parsed[0] if isinstance(parsed[0], str) else str(parsed[0])
+                except json.JSONDecodeError:
+                    pass
+            
+            # Xử lý nếu văn bản bị bao quanh bởi dấu ngoặc kép thừa
+            if text.startswith('"') and text.endswith('"'):
+                text = text[1:-1]
+                
+            # Xử lý ký tự xuống dòng bị escape
+            text = text.replace("\\n", "\n")
+            
+            return text
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, detail=f"❌ Tạo mô tả chủ đề thất bại: {e}")
+            raise HTTPException(500, detail=f"❌ Tạo mô tả chi tiết thất bại: {e}")
 
     async def create_learning_goals_async(
         self, schema: CreateCourseObjectivesAndAudienceSchema
-    ):
+    ) -> list[str]:
+        """
+        Tạo danh sách mục tiêu học tập.
+        Trả về: list[str] - mảng các mục tiêu
+        """
         try:
             prompt = f"""
                 Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
@@ -105,15 +149,36 @@ class CourseService:
                 - **Chỉ trả về mảng JSON**, không kèm văn bản khác.
                 """
 
-            return await self.llm_service.call_model(prompt)
+            result = await self.llm_service.call_model(prompt)
+            clean_result = result.strip()
+            
+            # Xử lý nếu có code block
+            if clean_result.startswith("```"):
+                clean_result = clean_result.split("```")[1]
+                if clean_result.startswith("json"):
+                    clean_result = clean_result[4:]
+                clean_result = clean_result.strip()
+            
+            try:
+                parsed_data = json.loads(clean_result)
+                if isinstance(parsed_data, list):
+                    return parsed_data
+                return [clean_result]
+            except json.JSONDecodeError:
+                # Fallback: split by newline
+                return [line.strip() for line in clean_result.split("\n") if line.strip()]
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, detail=f"❌ Tạo mô tả chủ đề thất bại: {e}")
+            raise HTTPException(500, detail=f"❌ Tạo mục tiêu học tập thất bại: {e}")
 
     async def create_request_async(
         self, schema: CreateCourseObjectivesAndAudienceSchema
-    ):
+    ) -> list[str]:
+        """
+        Tạo danh sách yêu cầu cần chuẩn bị.
+        Trả về: list[str] - mảng các yêu cầu
+        """
         try:
             prompt = f"""
                 Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
@@ -135,15 +200,34 @@ class CourseService:
                 - **Chỉ trả về mảng JSON**, không kèm văn bản khác.
                 """
 
-            return await self.llm_service.call_model(prompt)
+            result = await self.llm_service.call_model(prompt)
+            clean_result = result.strip()
+            
+            if clean_result.startswith("```"):
+                clean_result = clean_result.split("```")[1]
+                if clean_result.startswith("json"):
+                    clean_result = clean_result[4:]
+                clean_result = clean_result.strip()
+            
+            try:
+                parsed_data = json.loads(clean_result)
+                if isinstance(parsed_data, list):
+                    return parsed_data
+                return [clean_result]
+            except json.JSONDecodeError:
+                return [line.strip() for line in clean_result.split("\n") if line.strip()]
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, detail=f"❌ Tạo mô tả chủ đề thất bại: {e}")
+            raise HTTPException(500, detail=f"❌ Tạo yêu cầu thất bại: {e}")
 
     async def create_student_target_async(
         self, schema: CreateCourseObjectivesAndAudienceSchema
-    ):
+    ) -> list[str]:
+        """
+        Tạo danh sách đối tượng học viên phù hợp.
+        Trả về: list[str] - mảng các đối tượng
+        """
         try:
             prompt = f"""
                 Bạn là chuyên gia đào tạo trong lĩnh vực viết nội dung cho các khóa học trực tuyến..
@@ -165,8 +249,23 @@ class CourseService:
                 - **Chỉ trả về mảng JSON**, không kèm bất kỳ văn bản nào khác.
                 """
 
-            return await self.llm_service.call_model(prompt)
+            result = await self.llm_service.call_model(prompt)
+            clean_result = result.strip()
+            
+            if clean_result.startswith("```"):
+                clean_result = clean_result.split("```")[1]
+                if clean_result.startswith("json"):
+                    clean_result = clean_result[4:]
+                clean_result = clean_result.strip()
+            
+            try:
+                parsed_data = json.loads(clean_result)
+                if isinstance(parsed_data, list):
+                    return parsed_data
+                return [clean_result]
+            except json.JSONDecodeError:
+                return [line.strip() for line in clean_result.split("\n") if line.strip()]
 
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, detail=f"❌ Tạo mô tả chủ đề thất bại: {e}")
+            raise HTTPException(500, detail=f"❌ Tạo đối tượng học viên thất bại: {e}")

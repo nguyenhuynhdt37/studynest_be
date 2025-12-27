@@ -94,7 +94,7 @@ async def get_top_view_courses(
         # Nếu user chưa đăng nhập → user_id = None (vẫn dùng đc)
         user = await auth.get_current_user_if_any()
 
-        result = await course_service.get_top_view_courses(
+        result = await course_service.get_top_views_courses(
             user_id=user.id if user else None,
             limit=limit,
             cursor=cursor,

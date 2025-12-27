@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import (
+    TEXT,
     UUID,
     and_,
     asc,
@@ -366,3 +367,34 @@ class CategoryService:
             raise HTTPException(
                 500, f"Lỗi khi lấy danh sách khóa học theo category. {e}"
             )
+
+    async def get_root_and_level1_async(self, slug: str):
+        try:
+            stmt = select(
+                literal_column("id"),
+                literal_column("name"),
+                literal_column("slug"),
+                literal_column("level"),
+            ).select_from(
+                func.fn_get_root_and_level1_from_slug(
+                    cast(literal_column(f"'{slug}'"), TEXT)
+                )
+            )
+
+            rows = (await self.db.execute(stmt)).mappings().all()
+
+            return {
+                "items": [
+                    {
+                        "id": str(r["id"]),
+                        "name": r["name"],
+                        "slug": r["slug"],
+                        "level": int(r["level"]),
+                    }
+                    for r in rows
+                ]
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            raise e

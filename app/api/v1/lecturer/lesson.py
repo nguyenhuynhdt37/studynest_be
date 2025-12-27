@@ -2,9 +2,9 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, UploadFile, status
-from huggingface_hub import User
 
 from app.core.deps import AuthorizationService
+from app.db.models.database import User
 from app.schemas.lecturer.lesson import (
     CreateLesson,
     LessonCodeCreate,

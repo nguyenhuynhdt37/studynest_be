@@ -107,6 +107,11 @@ class CourseService:
 
             # 6️⃣ Lưu DB ngay để có course_id
             self.db.add(new_course)
+            await self.db.flush()
+
+            # ✅ CẬP NHẬT USER.COURSE_COUNT CHO GIẢNG VIÊN
+            lecturer.course_count = (lecturer.course_count or 0) + 1
+
             await self.db.commit()
             await self.db.refresh(new_course)
             background_tasks.add_task(self._process_embedding_and_search, new_course.id)
@@ -593,7 +598,14 @@ class CourseService:
                 detail="❌ Khóa học đã có học viên đăng ký, không thể xóa.",
             )
 
-        # 3️⃣ Cho phép xóa
+        # 3️⃣ Cho phép xóa + CẬP NHẬT THỐNG KÊ
+        # ✅ GIẢM COURSE_COUNT CHO LECTURER
+        lecturer = await self.db.scalar(
+            select(User).where(User.id == lecturer_id)
+        )
+        if lecturer:
+            lecturer.course_count = max((lecturer.course_count or 1) - 1, 0)
+
         await self.db.execute(delete(Courses).where(Courses.id == course_id))
         await self.db.commit()
 
@@ -1386,3 +1398,41 @@ class CourseService:
             "enroll_timeline": enroll_series,
             "activity_timeline": activity_series,
         }
+
+    async def get_all_categories_sorted_by_name(self):
+        """
+        Lấy toàn bộ danh mục, sắp xếp theo tên (A-Z), dùng cho giảng viên khi tạo khóa học.
+        """
+        try:
+            stmt = (
+                select(
+                    Categories.id,
+                    Categories.name,
+                    Categories.slug,
+                    Categories.parent_id,
+                    Categories.order_index,
+                )
+                .order_by(asc(Categories.name))
+            )
+
+            result = await self.db.execute(stmt)
+            rows = result.all()
+
+            return [
+                {
+                    "id": str(row.id),
+                    "name": row.name,
+                    "slug": row.slug,
+                    "parent_id": str(row.parent_id) if row.parent_id else None,
+                    "order_index": row.order_index or 0,
+                }
+                for row in rows
+            ]
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Lỗi khi lấy danh sách danh mục: {e}",
+            )

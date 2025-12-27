@@ -17,7 +17,7 @@ async def create_topic(
     service: TopicService = Depends(TopicService),
     authorization: AuthorizationService = Depends(AuthorizationService),
 ):
-    await authorization.require_role(["ADMIN"])
+    await authorization.require_role(["ADMIN", "LECTURER"])
     return await service.create_topic_async(schema, background_tasks)
 
 
@@ -33,7 +33,7 @@ async def get_topics(
     service: TopicService = Depends(TopicService),
     authorization: AuthorizationService = Depends(AuthorizationService),
 ):
-    await authorization.require_role(["ADMIN"])
+    await authorization.require_role(["ADMIN", "LECTURER"])
     return await service.get_topics_async(
         page, limit, category_id, is_active, search, sort_by, sort_order
     )

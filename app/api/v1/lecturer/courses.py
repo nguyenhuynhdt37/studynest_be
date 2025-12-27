@@ -42,6 +42,9 @@ async def getCategory(
     )
 
 
+
+
+
 @router.get("/discount-targets")
 async def get_courses_for_discount(
     authorization: AuthorizationService = Depends(AuthorizationService),
@@ -82,6 +85,13 @@ async def is_lecturer(
 ):
     await authorization.require_role(["LECTURER"])
     return {"is_lecturer": True}
+
+
+@router.get("/categories")
+async def get_course_categories(
+    course_service: CourseService = Depends(CourseService),
+):
+    return await course_service.get_all_categories_sorted_by_name()
 
 
 @router.get("/{course_id}/students")

@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 from app.db.models.database import (
     Courses,
     CourseSections,
-    LecturerUpgradePayments,
     Role,
     Transactions,
     User,
@@ -20,6 +19,8 @@ from app.db.models.database import (
 from app.db.sesson import get_session
 from app.libs.formats.datetime import now as get_now
 from app.libs.formats.datetime import to_utc_naive
+from app.schemas.shares.notification import NotificationCreateSchema
+from app.services.shares.notification import NotificationService
 
 
 class LecturerService:
@@ -41,23 +42,17 @@ class LecturerService:
             select(
                 User,
                 Wallets.balance.label("wallet_balance"),
-                LecturerUpgradePayments.paid_time.label("upgrade_date"),
             )
             .join(UserRoles, UserRoles.user_id == User.id)
             .join(Role, Role.id == UserRoles.role_id)
             .join(Wallets, Wallets.user_id == User.id, isouter=True)
-            .join(
-                LecturerUpgradePayments,
-                LecturerUpgradePayments.user_id == User.id,
-                isouter=True,
-            )
             .options(selectinload(User.user_roles).selectinload(UserRoles.role))
             .where(
                 Role.role_name == "LECTURER",
                 Role.role_name != "ADMIN",
                 User.deleted_at.is_(None),
             )
-            .group_by(User.id, Wallets.balance, LecturerUpgradePayments.paid_time)
+            .group_by(User.id, Wallets.balance)
         )
 
         # 🔹 Bộ lọc nâng cao
@@ -86,7 +81,6 @@ class LecturerService:
             "evaluated_count": User.evaluated_count,
             "student_count": User.student_count,
             "wallet_balance": Wallets.balance,
-            "upgrade_date": LecturerUpgradePayments.paid_time,
         }
 
         sort_column = sort_fields.get(sort_by, getattr(User, sort_by, User.create_at))
@@ -100,7 +94,7 @@ class LecturerService:
 
         # 🔹 Map dữ liệu trả về
         lecturers = []
-        for user, wallet_balance, upgrade_date in records:
+        for user, wallet_balance in records:
             lecturers.append(
                 {
                     "id": user.id,
@@ -115,10 +109,9 @@ class LecturerService:
                     "course_count": user.course_count or 0,
                     "student_count": user.student_count or 0,
                     "evaluated_count": user.evaluated_count or 0,
-                    "rating_avg": float(user.rating_avg or 0),
+                    "rating_avg": round(float(user.rating_avg or 0), 2),
                     "instructor_description": user.instructor_description,
-                    "wallet_balance": float(wallet_balance or 0),
-                    "upgrade_date": upgrade_date,
+                    "wallet_balance": round(float(wallet_balance or 0), 2),
                     "is_verified_email": user.is_verified_email,
                     "is_banned": user.is_banned,
                     "create_at": user.create_at,
@@ -140,34 +133,16 @@ class LecturerService:
 
     async def export_lecturers_async(self):
         """
-        📘 Xuất danh sách giảng viên cùng thông tin thanh toán nâng cấp & ví.
-        Bao gồm: thông tin cá nhân, ví, ngày nâng cấp, chi phí, giao dịch, v.v.
+        📘 Xuất danh sách giảng viên cùng thông tin ví.
         """
         stmt = (
             select(
                 User,
                 Wallets.balance.label("wallet_balance"),
-                LecturerUpgradePayments.amount.label("upgrade_amount"),
-                LecturerUpgradePayments.paid_time.label("upgrade_date"),
-                LecturerUpgradePayments.payment_status.label("payment_status"),
-                Transactions.method.label("payment_method"),
-                Transactions.transaction_code.label("transaction_code"),
-                Transactions.status.label("transaction_status"),
-                Transactions.created_at.label("transaction_created_at"),
             )
             .join(UserRoles, UserRoles.user_id == User.id)
             .join(Role, Role.id == UserRoles.role_id)
             .join(Wallets, Wallets.user_id == User.id, isouter=True)
-            .join(
-                LecturerUpgradePayments,
-                LecturerUpgradePayments.user_id == User.id,
-                isouter=True,
-            )
-            .join(
-                Transactions,
-                Transactions.id == LecturerUpgradePayments.transaction_id,
-                isouter=True,
-            )
             .options(selectinload(User.user_roles).selectinload(UserRoles.role))
             .where(
                 Role.role_name == "LECTURER",
@@ -177,13 +152,6 @@ class LecturerService:
             .group_by(
                 User.id,
                 Wallets.balance,
-                LecturerUpgradePayments.amount,
-                LecturerUpgradePayments.paid_time,
-                LecturerUpgradePayments.payment_status,
-                Transactions.method,
-                Transactions.transaction_code,
-                Transactions.status,
-                Transactions.created_at,
             )
         )
 
@@ -197,13 +165,6 @@ class LecturerService:
         for (
             user,
             wallet_balance,
-            upgrade_amount,
-            upgrade_date,
-            payment_status,
-            payment_method,
-            transaction_code,
-            transaction_status,
-            transaction_created_at,
         ) in records:
             lecturers.append(
                 {
@@ -226,14 +187,6 @@ class LecturerService:
                         else "❌ Chưa xác minh"
                     ),
                     "Bị cấm": "🚫 Có" if user.is_banned else "✅ Không",
-                    # === DỮ LIỆU NÂNG CẤP GIẢNG VIÊN ===
-                    "Ngày thanh toán nâng cấp": upgrade_date,
-                    "Ngày đăng ký giao dịch": transaction_created_at,
-                    "Mã giao dịch": transaction_code,
-                    "Phương thức thanh toán": payment_method,
-                    "Trạng thái giao dịch": transaction_status,
-                    "Chi phí nâng cấp (VNĐ)": float(upgrade_amount or 0),
-                    "Trạng thái thanh toán": payment_status,
                     "Ngày tạo tài khoản": user.create_at,
                 }
             )
@@ -334,14 +287,7 @@ class LecturerService:
             select(Wallets).where(Wallets.user_id == lecturer_id)
         )
 
-        # 3️⃣ Nâng cấp
-        upgrade = await self.db.scalar(
-            select(LecturerUpgradePayments).where(
-                LecturerUpgradePayments.user_id == lecturer_id
-            )
-        )
-
-        # 4️⃣ Giao dịch (phân trang + sắp xếp)
+        # 3️⃣ Giao dịch (phân trang + sắp xếp)
         offset = (page - 1) * page_size
         tx_query = (
             select(Transactions)
@@ -389,17 +335,6 @@ class LecturerService:
                 "total_in": round(float(wallet.total_in or 0), 2) if wallet else 0,
                 "total_out": round(float(wallet.total_out or 0), 2) if wallet else 0,
                 "last_transaction_at": wallet.last_transaction_at if wallet else None,
-            },
-            "upgrade_payment": {
-                "amount": round(float(upgrade.amount or 0), 2) if upgrade else 0,
-                "paid_time": upgrade.paid_time if upgrade else None,
-                "payment_status": upgrade.payment_status if upgrade else None,
-                "verified_by": (
-                    str(upgrade.verified_by)
-                    if upgrade and upgrade.verified_by
-                    else None
-                ),
-                "note": upgrade.note if upgrade else None,
             },
             "transactions": [
                 {
@@ -566,15 +501,28 @@ class LecturerService:
             # 3️⃣ Thực hiện chặn
             lecturer.is_banned = True
             lecturer.banned_reason = schema.banned_reason
-            lecturer.banned_until = (
-                None
-                if schema.is_block_permanently
-                else to_utc_naive(schema.banned_until or get_now())
-            )
-            lecturer.update_at = get_now()
+            if schema.is_block_permanently:
+                lecturer.banned_until = None
+            else:
+                lecturer.banned_until = await to_utc_naive(schema.banned_until or get_now())
+            lecturer.update_at = await to_utc_naive(get_now())
 
             await self.db.commit()
             await self.db.refresh(lecturer)
+
+            # ✅ GỬI THÔNG BÁO CHO GIẢNG VIÊN
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=lecturer.id,
+                    title="⚠️ Tài khoản giảng viên bị tạm khóa",
+                    content=f"Tài khoản của bạn đã bị tạm khóa. Lý do: {schema.banned_reason or 'Không có lý do cụ thể'}.",
+                    type="account",
+                    role_target=["LECTURER"],
+                    url="/lecturer/settings",
+                )
+            )
+
             return {"message": "Đã chặn giảng viên thành công."}
 
         except HTTPException:
@@ -619,6 +567,20 @@ class LecturerService:
 
             await self.db.commit()
             await self.db.refresh(lecturer)
+
+            # ✅ GỬI THÔNG BÁO CHO GIẢNG VIÊN
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=lecturer.id,
+                    title="✅ Tài khoản giảng viên đã được mở khóa",
+                    content="Tài khoản của bạn đã được mở khóa. Bạn có thể tiếp tục hoạt động bình thường.",
+                    type="account",
+                    role_target=["LECTURER"],
+                    url="/lecturer/dashboard",
+                )
+            )
+
             return {"message": "Đã mở chặn giảng viên thành công."}
 
         except HTTPException:
@@ -658,6 +620,20 @@ class LecturerService:
             )
 
             await self.db.commit()
+
+            # ✅ GỬI THÔNG BÁO CHO USER
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=lecturer_id,
+                    title="⚠️ Quyền giảng viên đã bị thu hồi",
+                    content="Quyền giảng viên của bạn đã bị thu hồi bởi quản trị viên. Liên hệ hỗ trợ nếu bạn có thắc mắc.",
+                    type="account",
+                    role_target=["USER"],
+                    url="/support",
+                )
+            )
+
             return {"message": "Đã gỡ quyền giảng viên thành công."}
 
         except HTTPException:
@@ -710,6 +686,19 @@ class LecturerService:
                 )
             )
             await self.db.commit()
+
+            # ✅ GỬI THÔNG BÁO CHO USER
+            notification_service = NotificationService(self.db)
+            await notification_service.create_notification_async(
+                NotificationCreateSchema(
+                    user_id=user_id,
+                    title="🎉 Chúc mừng! Bạn đã được cấp quyền giảng viên",
+                    content="Bạn đã được cấp quyền giảng viên. Bắt đầu tạo khóa học và chia sẻ kiến thức của bạn ngay!",
+                    type="account",
+                    role_target=["LECTURER"],
+                    url="/lecturer/dashboard",
+                )
+            )
 
             return {"message": "Đã cấp quyền giảng viên thành công."}
 

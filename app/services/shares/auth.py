@@ -1,20 +1,28 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from re import DEBUG
 from typing import Any
 
 from fastapi import Depends, HTTPException, Response, status
+from google.auth.transport import requests
+from google.oauth2 import id_token
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.expression import desc
 
 from app.core.security import SecurityService
+from app.core.settings import settings
 from app.db.models.database import EmailVerifications, Role, User, UserRoles
 from app.db.sesson import get_session
 from app.libs.formats.datetime import now as get_now
-from app.schemas.auth.user import LoginUser, RefreshEmail, UserCreate, VerifyEmail
+from app.schemas.auth.user import (
+    GoogleLogin,
+    LoginUser,
+    RefreshEmail,
+    UserCreate,
+    VerifyEmail,
+)
 from app.services.shares.mailer import MailerService
 
 
@@ -38,33 +46,79 @@ class AuthService:
             )
             result = await self.db.execute(stmt)
             user: User | None = result.scalar()
+            
+            # 1️⃣ KHÔNG TÌM THẤY USER HOẶC SAI MẬT KHẨU
             if not user:
-                raise HTTPException(404, "User not found")
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "INVALID_CREDENTIALS",
+                        "message": "Email hoặc mật khẩu không đúng",
+                    }
+                )
             if not await self.security.verify_password(
                 schema.password, user.password or ""
             ):
-                raise HTTPException(404, "User not found")
-            if not user.is_verified_email:
-                raise HTTPException(401, "Người dùng chưa xác thực email")
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "INVALID_CREDENTIALS",
+                        "message": "Email hoặc mật khẩu không đúng",
+                    }
+                )
 
+            # 2️⃣ TÀI KHOẢN ĐÃ BỊ XÓA
+            if user.deleted_at:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "ACCOUNT_DELETED",
+                        "message": "Tài khoản đã bị xóa khỏi hệ thống",
+                        "deleted_at": str(user.deleted_at),
+                        "reason": user.deleted_until or "Không có lý do cụ thể",
+                    }
+                )
+
+            # 3️⃣ CHƯA XÁC THỰC EMAIL
+            if not user.is_verified_email:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "EMAIL_NOT_VERIFIED",
+                        "message": "Vui lòng xác thực email trước khi đăng nhập",
+                        "email": user.email,
+                    }
+                )
+
+            # 4️⃣ TÀI KHOẢN BỊ KHÓA (BANNED)
             if user.is_banned:
+                # Kiểm tra nếu đã hết hạn ban → tự động mở khóa
                 if user.banned_until and user.banned_until < get_now():
                     user.is_banned = False
                     user.banned_reason = None
                     user.banned_until = None
                     await self.db.commit()
                 else:
+                    # Xác định loại ban
+                    is_permanent = user.banned_until is None
                     raise HTTPException(
                         status_code=403,
-                        detail=f"Tài khoản bị khóa: {user.banned_reason or 'Không rõ lý do'}",
+                        detail={
+                            "error_code": "ACCOUNT_BANNED_PERMANENT" if is_permanent else "ACCOUNT_BANNED_TEMPORARY",
+                            "message": "Tài khoản đã bị khóa vĩnh viễn" if is_permanent else "Tài khoản đang bị tạm khóa",
+                            "reason": user.banned_reason or "Không có lý do cụ thể",
+                            "banned_until": str(user.banned_until) if user.banned_until else None,
+                            "is_permanent": is_permanent,
+                        }
                     )
 
+            # 5️⃣ TẠO TOKEN VÀ SET COOKIE
             res.set_cookie(
                 key="access_token",
                 value=await self.security.create_access_token(str(user.id)),
                 httponly=True,
-                secure=not DEBUG,  # 🟢 Dev = False, Prod = True
-                samesite="lax",  # hoặc "none" nếu frontend/backend khác domain
+                secure=False,  # Dev = False, Prod = True
+                samesite="lax",  # FE và BE phải cùng domain (cùng localhost hoặc cùng 127.0.0.1)
                 max_age=60 * 60 * 24,
                 path="/",
             )
@@ -92,6 +146,18 @@ class AuthService:
             new_user.create_at = get_now()
             self.db.add(new_user)
             await self.db.flush()
+
+            # ✅ GÁN ROLE USER MẶC ĐỊNH NGAY KHI TẠO TÀI KHOẢN
+            role = await self.db.scalar(select(Role).where(Role.role_name == "USER"))
+            if not role:
+                role = Role(
+                    role_name="USER",
+                    details="Customers use the service of the system",
+                )
+                self.db.add(role)
+                await self.db.flush()
+            self.db.add(UserRoles(user_id=new_user.id, role_id=role.id))
+
             code = await self.security.generate_otp()
             expired_at = get_now() + timedelta(minutes=5)
             verification = EmailVerifications(
@@ -112,8 +178,8 @@ class AuthService:
         res.delete_cookie(
             key="access_token",
             httponly=True,
-            secure=False,  # dev: False (chạy https thì True)
-            samesite=None,  # 👈 cho cross-site (FE:3000 <-> BE:8000)
+            secure=False,  # 🟢 Dev = False
+            samesite="lax",
             path="/",
             domain=None,
         )
@@ -207,14 +273,7 @@ class AuthService:
                     detail="Mã xác thực không hợp lệ hoặc đã hết hạn.",
                 )
 
-            role = await self.db.scalar(select(Role).where(Role.role_name == "USER"))
-            if not role:
-                role = Role(
-                    role_name="USER", details="Customers use the service of the system"
-                )
-                self.db.add(role)
-                await self.db.flush()
-            self.db.add(UserRoles(role_id=role.id, user_id=user.id))
+            # User đã được gán role USER từ lúc register, chỉ cần cập nhật trạng thái
             user.is_verified_email = True
             user.is_active = True
             user.email_verified_at = get_now()
@@ -225,8 +284,8 @@ class AuthService:
                 key="access_token",
                 value=await self.security.create_access_token(str(user.id)),
                 httponly=True,
-                secure=not DEBUG,  # 🟢 Dev = False, Prod = True
-                samesite="lax",  # hoặc "none" nếu frontend/backend khác domain
+                secure=False,  # Dev = False, Prod = True
+                samesite="lax",  # FE và BE phải cùng domain (cùng localhost hoặc cùng 127.0.0.1)
                 max_age=60 * 60 * 24,
                 path="/",
             )
@@ -286,3 +345,126 @@ class AuthService:
             "created_at": user.create_at,
             "updated_at": user.update_at,
         }
+
+    async def login_google_async(self, schema: GoogleLogin, res: Response):
+        try:
+            # 1) VERIFY GOOGLE ID TOKEN
+            info = id_token.verify_oauth2_token(
+                schema.credential,
+                requests.Request(),
+                settings.GOOGLE_API_CLIENT_ID_LOGIN_GOOGLE,
+            )
+
+            google_uid = info.get("sub")
+            email = info.get("email")
+            fullname = info.get("name")
+            avatar = info.get("picture")
+
+            if not email:
+                raise HTTPException(400, "Google không trả về email hợp lệ")
+
+            # 2) TÌM USER TRONG DB
+            stmt = (
+                select(User)
+                .where(User.email == email)
+                .options(selectinload(User.user_roles).selectinload(UserRoles.role))
+            )
+            user = (await self.db.execute(stmt)).scalar_one_or_none()
+
+            # ─────────────────────────────────────────────
+            # 3) TỰ TẠO USER MỚI (khi chưa có)
+            # ─────────────────────────────────────────────
+            if not user:
+                user = User(
+                    email=email,
+                    fullname=fullname or "",
+                    avatar=avatar,
+                    password="google-oauth",  # không dùng mật khẩu
+                    is_verified_email=True,  # Google đảm bảo email verified
+                    email_verified_at=get_now(),
+                    is_active=True,
+                    create_at=get_now(),
+                    update_at=get_now(),
+                )
+
+                self.db.add(user)
+                await self.db.flush()
+
+                # tìm role USER
+                role = await self.db.scalar(
+                    select(Role).where(Role.role_name == "USER")
+                )
+                if not role:
+                    role = Role(
+                        role_name="USER",
+                        details="Customers use the service of the system",
+                    )
+                    self.db.add(role)
+                    await self.db.flush()
+
+                # add vai trò cho user mới
+                self.db.add(UserRoles(user_id=user.id, role_id=role.id))
+
+                await self.db.commit()
+                await self.db.refresh(user)
+
+            # ─────────────────────────────────────────────
+            # 4) CHECK TÀI KHOẢN ĐÃ BỊ XÓA
+            # ─────────────────────────────────────────────
+            if user.deleted_at:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "ACCOUNT_DELETED",
+                        "message": "Tài khoản đã bị xóa khỏi hệ thống",
+                        "deleted_at": str(user.deleted_at),
+                        "reason": user.deleted_until or "Không có lý do cụ thể",
+                    }
+                )
+
+            # ─────────────────────────────────────────────
+            # 5) CHECK BANNED ACCOUNT
+            # ─────────────────────────────────────────────
+            if user.is_banned:
+                if user.banned_until and user.banned_until < get_now():
+                    # hết hạn ban → mở lại
+                    user.is_banned = False
+                    user.banned_reason = None
+                    user.banned_until = None
+                    await self.db.commit()
+                else:
+                    is_permanent = user.banned_until is None
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error_code": "ACCOUNT_BANNED_PERMANENT" if is_permanent else "ACCOUNT_BANNED_TEMPORARY",
+                            "message": "Tài khoản đã bị khóa vĩnh viễn" if is_permanent else "Tài khoản đang bị tạm khóa",
+                            "reason": user.banned_reason or "Không có lý do cụ thể",
+                            "banned_until": str(user.banned_until) if user.banned_until else None,
+                            "is_permanent": is_permanent,
+                        }
+                    )
+
+            # ─────────────────────────────────────────────
+            # 6) TẠO TOKEN + SET COOKIE
+            # ─────────────────────────────────────────────
+            token = await self.security.create_access_token(str(user.id))
+
+            res.set_cookie(
+                key="access_token",
+                value=token,
+                httponly=True,
+                secure=False,  # Dev = False, Prod = True
+                samesite="lax",  # FE và BE phải cùng domain (cùng localhost hoặc cùng 127.0.0.1)
+                max_age=60 * 60 * 24,
+                path="/",
+            )
+
+            return {"message": "Login Google successful"}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            print("Google login error:", e)
+            await self.db.rollback()
+            raise HTTPException(400, "Token Google không hợp lệ")
