@@ -13,6 +13,7 @@ from app.api.v1.admin import discounts as admin_discounts
 from app.api.v1.admin import lecturer as admin_lecturer
 from app.api.v1.admin import platform_wallet_service, role
 from app.api.v1.admin import refunds as admin_refunds
+from app.api.v1.admin import statistics as admin_statistics
 from app.api.v1.admin import topic as admin_topic
 from app.api.v1.admin import transactions as admin_transactions
 from app.api.v1.admin import user as admin_user
@@ -30,6 +31,7 @@ from app.api.v1.lecturer import courses as lecturer_courses
 from app.api.v1.lecturer import discounts as lecturer_discounts
 from app.api.v1.lecturer import payout as lecturer_payout
 from app.api.v1.lecturer import refunds as lecturer_refunds
+from app.api.v1.lecturer import statistics as lecturer_statistics
 from app.api.v1.lecturer import transactions as lecturer_transactions
 from app.api.v1.lecturer import wallets as lecturer_wallets
 from app.api.v1.lecturer import withdraw as lecturer_withdraw
@@ -37,6 +39,7 @@ from app.api.v1.lecturer import withdraw as lecturer_withdraw
 # share
 from app.api.v1.shares import auth, location, notification, profile, upload
 from app.api.v1.user import category, favorites, learning, user_preferences, wallets
+from app.api.v1.user import chat_sql as user_chat_sql
 from app.api.v1.user import course_enroll as course_enroll
 from app.api.v1.user import courses as user_courses
 from app.api.v1.user import discounts as user_discounts
@@ -141,6 +144,7 @@ app.include_router(user_discounts.router, prefix=prefix)
 app.include_router(user_refunds.router, prefix=prefix)
 app.include_router(user_lecturer.router, prefix=prefix)
 app.include_router(user_tutor_chat.router, prefix=prefix)
+app.include_router(user_chat_sql.router, prefix=prefix)
 
 # --- LECTURER ROUTES ---
 app.include_router(lecturer_courses.router, prefix=prefix)
@@ -152,6 +156,7 @@ app.include_router(lecturer_transactions.router, prefix=prefix)
 app.include_router(lecturer_refunds.router, prefix=prefix)
 app.include_router(lecturer_payout.router, prefix=prefix)
 app.include_router(lecturer_withdraw.router, prefix=prefix)
+app.include_router(lecturer_statistics.router, prefix=prefix)
 
 # --- ADMIN ROUTES ---
 app.include_router(admin_user.router, prefix=prefix)
@@ -164,6 +169,7 @@ app.include_router(admin_discounts.router, prefix=prefix)
 app.include_router(admin_transactions.router, prefix=prefix)
 app.include_router(admin_refunds.router, prefix=prefix)
 app.include_router(admin_withdraw.router, prefix=prefix)
+app.include_router(admin_statistics.router, prefix=prefix)
 
 # --- CHAT / AI ROUTES ---
 app.include_router(chat_topic_admin.router, prefix=prefix)

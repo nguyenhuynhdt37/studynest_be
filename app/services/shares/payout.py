@@ -263,7 +263,8 @@ class PayoutService:
         # ==========================================
         try:
             token_data = await paypal.get_userinfo_from_code(code, redirect_uri)
-        except Exception:
+        except Exception as e:
+            print(f"❌ [PayPal Callback Error]: {e}")
             # Escape yên lặng, không crash
             return RedirectResponse(
                 f"{settings.FRONTEND_URL}/lecturer/profile?paypal=connected&error=exchange"

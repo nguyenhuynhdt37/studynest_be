@@ -143,7 +143,12 @@ FOLLOW_UP: List[str] = [
     "roi sao",
     "roi sao nua",
     "tiep i",
+    "tiep i",
     "tiep tuc i",
+    "them thong tin",
+    "thong tin them",
+    "biet them",
+    "cho toi them thong tin",
     # EN
     "explain more",
     "more detail",

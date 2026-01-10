@@ -46,7 +46,7 @@ class AuthService:
             )
             result = await self.db.execute(stmt)
             user: User | None = result.scalar()
-            
+
             # 1️⃣ KHÔNG TÌM THẤY USER HOẶC SAI MẬT KHẨU
             if not user:
                 raise HTTPException(
@@ -54,7 +54,7 @@ class AuthService:
                     detail={
                         "error_code": "INVALID_CREDENTIALS",
                         "message": "Email hoặc mật khẩu không đúng",
-                    }
+                    },
                 )
             if not await self.security.verify_password(
                 schema.password, user.password or ""
@@ -64,7 +64,7 @@ class AuthService:
                     detail={
                         "error_code": "INVALID_CREDENTIALS",
                         "message": "Email hoặc mật khẩu không đúng",
-                    }
+                    },
                 )
 
             # 2️⃣ TÀI KHOẢN ĐÃ BỊ XÓA
@@ -76,7 +76,7 @@ class AuthService:
                         "message": "Tài khoản đã bị xóa khỏi hệ thống",
                         "deleted_at": str(user.deleted_at),
                         "reason": user.deleted_until or "Không có lý do cụ thể",
-                    }
+                    },
                 )
 
             # 3️⃣ CHƯA XÁC THỰC EMAIL
@@ -87,7 +87,7 @@ class AuthService:
                         "error_code": "EMAIL_NOT_VERIFIED",
                         "message": "Vui lòng xác thực email trước khi đăng nhập",
                         "email": user.email,
-                    }
+                    },
                 )
 
             # 4️⃣ TÀI KHOẢN BỊ KHÓA (BANNED)
@@ -104,12 +104,22 @@ class AuthService:
                     raise HTTPException(
                         status_code=403,
                         detail={
-                            "error_code": "ACCOUNT_BANNED_PERMANENT" if is_permanent else "ACCOUNT_BANNED_TEMPORARY",
-                            "message": "Tài khoản đã bị khóa vĩnh viễn" if is_permanent else "Tài khoản đang bị tạm khóa",
+                            "error_code": (
+                                "ACCOUNT_BANNED_PERMANENT"
+                                if is_permanent
+                                else "ACCOUNT_BANNED_TEMPORARY"
+                            ),
+                            "message": (
+                                "Tài khoản đã bị khóa vĩnh viễn"
+                                if is_permanent
+                                else "Tài khoản đang bị tạm khóa"
+                            ),
                             "reason": user.banned_reason or "Không có lý do cụ thể",
-                            "banned_until": str(user.banned_until) if user.banned_until else None,
+                            "banned_until": (
+                                str(user.banned_until) if user.banned_until else None
+                            ),
                             "is_permanent": is_permanent,
-                        }
+                        },
                     )
 
             # 5️⃣ TẠO TOKEN VÀ SET COOKIE
@@ -419,7 +429,7 @@ class AuthService:
                         "message": "Tài khoản đã bị xóa khỏi hệ thống",
                         "deleted_at": str(user.deleted_at),
                         "reason": user.deleted_until or "Không có lý do cụ thể",
-                    }
+                    },
                 )
 
             # ─────────────────────────────────────────────
@@ -437,12 +447,22 @@ class AuthService:
                     raise HTTPException(
                         status_code=403,
                         detail={
-                            "error_code": "ACCOUNT_BANNED_PERMANENT" if is_permanent else "ACCOUNT_BANNED_TEMPORARY",
-                            "message": "Tài khoản đã bị khóa vĩnh viễn" if is_permanent else "Tài khoản đang bị tạm khóa",
+                            "error_code": (
+                                "ACCOUNT_BANNED_PERMANENT"
+                                if is_permanent
+                                else "ACCOUNT_BANNED_TEMPORARY"
+                            ),
+                            "message": (
+                                "Tài khoản đã bị khóa vĩnh viễn"
+                                if is_permanent
+                                else "Tài khoản đang bị tạm khóa"
+                            ),
                             "reason": user.banned_reason or "Không có lý do cụ thể",
-                            "banned_until": str(user.banned_until) if user.banned_until else None,
+                            "banned_until": (
+                                str(user.banned_until) if user.banned_until else None
+                            ),
                             "is_permanent": is_permanent,
-                        }
+                        },
                     )
 
             # ─────────────────────────────────────────────
