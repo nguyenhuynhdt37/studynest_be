@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = ""
     BACKEND_URL: str = ""
 
+    # Redis / realtime presence
+    REDIS_URL: str = "redis://localhost:6379/0"
+    PRESENCE_TTL_SECONDS: int = 90
+
     class Config:
         env_file = ".env"
         extra = "ignore"  # tránh crash nếu .env có key dư

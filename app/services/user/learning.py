@@ -571,7 +571,6 @@ class LearningService:
             lesson = await self.db.scalar(
                 select(Lessons)
                 .options(
-                    selectinload(Lessons.lesson_videos),
                     selectinload(Lessons.lesson_resources),
                     selectinload(Lessons.lesson_quizzes).selectinload(
                         LessonQuizzes.lesson_quiz_options
@@ -584,7 +583,12 @@ class LearningService:
             if not lesson:
                 raise HTTPException(404, "Không tìm thấy bài học")
 
-            # 2️⃣ Lấy tiến độ học
+            # 2️⃣ Lấy video từ bảng riêng LessonVideos
+            video = await self.db.scalar(
+                select(LessonVideos).where(LessonVideos.lesson_id == lesson_id)
+            )
+
+            # 3️⃣ Lấy tiến độ học
             progress = await self.db.scalar(
                 select(LessonProgress).where(
                     LessonProgress.lesson_id == lesson_id,
@@ -595,7 +599,7 @@ class LearningService:
             is_completed = bool(progress and progress.is_completed)
             is_locked = bool(getattr(lesson.section.course, "is_lock_lesson", False))
 
-            # 3️⃣ Random đáp án cho từng quiz
+            # 4️⃣ Random đáp án cho từng quiz
             quizzes = []
             for q in lesson.lesson_quizzes or []:
                 options = q.lesson_quiz_options or []
@@ -623,18 +627,14 @@ class LearningService:
                     }
                 )
 
-            # 4️⃣ Trả dữ liệu hoàn chỉnh cho frontend
+            # 5️⃣ Trả dữ liệu hoàn chỉnh cho frontend
             return {
                 "id": str(lesson.id),
                 "title": lesson.title,
                 "lesson_type": lesson.lesson_type,
                 "description": lesson.description,
-                "duration": (
-                    lesson.lesson_videos.duration if lesson.lesson_videos else 0
-                ),
-                "file_id": (
-                    lesson.lesson_videos.file_id if lesson.lesson_videos else None
-                ),
+                "duration": video.duration if video else 0,
+                "file_id": video.file_id if video else None,
                 "resources": lesson.lesson_resources,
                 "quizzes": quizzes,
                 "is_completed": is_completed,
@@ -659,7 +659,6 @@ class LearningService:
             lesson = await self.db.scalar(
                 select(Lessons)
                 .options(
-                    selectinload(Lessons.lesson_videos),
                     selectinload(Lessons.lesson_quizzes).selectinload(
                         LessonQuizzes.lesson_quiz_options
                     ),

@@ -36,6 +36,28 @@ class WalletsService:
     ):
         self.db = db
 
+    def _payment_redirect_url(
+        self,
+        transaction: Transactions,
+        status: str,
+        order_id: str,
+    ) -> str:
+        origin = (transaction.return_origin or settings.FRONTEND_URL or "").rstrip("/")
+        redirect = transaction.return_pathname or ""
+
+        if not origin:
+            origin = settings.FRONTEND_URL.rstrip("/")
+
+        is_web_url = origin.startswith("http://") or origin.startswith("https://")
+        base = f"{origin}/transaction" if is_web_url else origin
+        separator = "&" if "?" in base else "?"
+
+        return (
+            f"{base}{separator}status={status}"
+            f"&order_id={order_id}"
+            f"&redirect={redirect}"
+        )
+
     async def create_payment_async(
         self,
         http,
@@ -150,7 +172,7 @@ class WalletsService:
             raise HTTPException(status_code=500, detail=f"Lỗi tạo thanh toán: {e}")
 
     async def paypal_callback_async(
-        self, http, token: str, user: User, payer_id: str | None = None
+        self, http, token: str, payer_id: str | None = None
     ):
         """
         Callback PayPal sau khi thanh toán:
@@ -193,7 +215,7 @@ class WalletsService:
         # Nếu đã completed → chống double callback
         if transaction.status == "completed":
             return RedirectResponse(
-                url=f"{transaction.return_origin}/transaction?status=success"
+                url=self._payment_redirect_url(transaction, "success", token)
             )
 
         # ========================
@@ -209,6 +231,8 @@ class WalletsService:
 
         if not wallet:
             raise HTTPException(404, "Không tìm thấy ví người dùng.")
+
+        user = await self.db.scalar(select(User).where(User.id == transaction.user_id))
 
         # ========================
         # 4) LẤY VÍ HỆ THỐNG (1 RECORD)
@@ -299,7 +323,7 @@ class WalletsService:
                 user_id=None,
                 roles=["ADMIN"],
                 title="Có giao dịch nạp tiền mới 💵",
-                content=f"Người dùng {user.fullname} vừa nạp {amount:,} VND qua PayPal.",
+                content=f"Người dùng {user.fullname if user else transaction.user_id} vừa nạp {amount:,} VND qua PayPal.",
                 url="/admin/wallets",
                 type="platform_wallet",
                 role_target=["ADMIN"],
@@ -316,11 +340,7 @@ class WalletsService:
         # ========================
         # 11) REDIRECT FE
         # ========================
-        redirect_url = (
-            f"{transaction.return_origin}"
-            f"/transaction?status=success&order_id={token}"
-            f"&redirect={transaction.return_pathname}"
-        )
+        redirect_url = self._payment_redirect_url(transaction, "success", token)
 
         return RedirectResponse(url=redirect_url)
 
@@ -341,7 +361,7 @@ class WalletsService:
 
             # ⚠️ Nếu giao dịch đã completed thì bỏ qua
             if transaction.status == "completed":
-                redirect_url = f"{transaction.return_origin}/transaction?status=success&order_id={token}?redirect={transaction.return_pathname}"
+                redirect_url = self._payment_redirect_url(transaction, "success", token)
                 return RedirectResponse(url=redirect_url)
 
             # ❌ Đánh dấu giao dịch thất bại / bị hủy
@@ -354,7 +374,7 @@ class WalletsService:
             await self.db.commit()
 
             # 🔁 Redirect về FE
-            redirect_url = f"{transaction.return_origin}/transaction?status=failed&order_id={token}??redirect={transaction.return_pathname}"
+            redirect_url = self._payment_redirect_url(transaction, "failed", token)
             return RedirectResponse(url=redirect_url)
 
         except Exception as e:
@@ -368,6 +388,26 @@ class WalletsService:
             return wallet
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Lỗi lấy ví: {e}")
+
+    async def get_or_create_wallet_async(self, user_id: uuid.UUID):
+        """Lấy ví của user, nếu chưa có thì tạo mới."""
+        wallet = await self.db.scalar(
+            select(Wallets).where(Wallets.user_id == user_id)
+        )
+        if not wallet:
+            wallet = Wallets(
+                user_id=user_id,
+                balance=Decimal(0),
+                currency="VND",
+                total_in=Decimal(0),
+                total_out=Decimal(0),
+                created_at=await to_utc_naive(get_now()),
+                updated_at=await to_utc_naive(get_now()),
+            )
+            self.db.add(wallet)
+            # Lưu ý: Không commit ở đây để dùng chung transaction với service gọi nó
+            await self.db.flush()
+        return wallet
 
     async def retry_wallet_payment_async(self, http, order_id: str, user_id: uuid.UUID):
         try:

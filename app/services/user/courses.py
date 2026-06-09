@@ -456,29 +456,50 @@ class CoursePublicService:
         try:
             results = await self.db.execute(
                 select(Lessons)
-                .options(selectinload(Lessons.lesson_videos))
-                .where(Lessons.course_id == course_id)
+                .where(
+                    Lessons.course_id == course_id,
+                    Lessons.is_preview.is_(True),
+                )
+                .order_by(Lessons.position)
             )
             lesson_previews = results.scalars().all()
-            if lesson_previews is None:
-                raise HTTPException(404, "Khong tim thay bai hoc nao duoc cong khai")
+            if not lesson_previews:
+                raise HTTPException(404, "Không tìm thấy bài học xem trước nào")
+
+            lesson_ids = [lesson.id for lesson in lesson_previews]
+            video_map = {}
+            if lesson_ids:
+                result_videos = await self.db.execute(
+                    select(
+                        LessonVideos.lesson_id,
+                        LessonVideos.video_url,
+                        LessonVideos.duration,
+                    ).where(LessonVideos.lesson_id.in_(lesson_ids))
+                )
+                video_map = {r.lesson_id: r for r in result_videos.fetchall()}
+
             return [
                 {
-                    "id": lesson.id,
+                    "id": str(lesson.id),
                     "title": lesson.title,
+                    "lesson_type": lesson.lesson_type.value if hasattr(lesson.lesson_type, 'value') else lesson.lesson_type,
+                    "position": lesson.position,
+                    "is_preview": lesson.is_preview,
                     "video_url": (
-                        lesson.lesson_videos.video_url if lesson.lesson_videos else None
+                        video_map[lesson.id].video_url if lesson.id in video_map else None
                     ),
                     "duration": (
-                        lesson.lesson_videos.duration if lesson.lesson_videos else None
+                        video_map[lesson.id].duration if lesson.id in video_map else None
                     ),
                 }
                 for lesson in lesson_previews
             ]
 
+        except HTTPException:
+            raise
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(500, f"Lỗi khi lấy nhưng khóa học xem trước: {str(e)}")
+            raise HTTPException(500, f"Lỗi khi lấy bài học xem trước: {str(e)}")
 
     async def enroll_in_course_async(
         self,
@@ -1062,14 +1083,14 @@ class CoursePublicService:
                     last_rating = float(p[0])
                     last_id = p[1]
 
-            # 4) Base query
+            # 4) Base query - lấy khóa học được đánh giá cao nhất, không lọc theo views
             stmt = (
                 select(Courses)
                 .options(selectinload(Courses.instructor))
                 .where(
                     Courses.is_published.is_(True),
                     Courses.approval_status == "approved",
-                    Courses.views >= views_cutoff,  # chỉ lấy top 20% views
+                    Courses.rating_count > 0,  # chỉ lấy khóa đã có đánh giá
                 )
             )
 

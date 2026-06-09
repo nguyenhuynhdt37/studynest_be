@@ -1,6 +1,7 @@
 from typing import Any, Optional
 import datetime
 import decimal
+import enum
 import uuid
 
 from pgvector.sqlalchemy.vector import VECTOR
@@ -12,10 +13,25 @@ class Base(DeclarativeBase):
     pass
 
 
+class CodeFileRole(str, enum.Enum):
+    SOLUTION = 'solution'
+    STARTER = 'starter'
+    USER = 'user'
+
+
+class LessonTypeEnum(str, enum.Enum):
+    VIDEO = 'video'
+    ARTICLE = 'article'
+    QUIZ = 'quiz'
+    CODE = 'code'
+    ASSIGNMENT = 'assignment'
+    RESOURCE = 'resource'
+
+
 class Categories(Base):
     __tablename__ = 'categories'
     __table_args__ = (
-    ForeignKeyConstraint(['parent_id'], ['public.categories.id'], ondelete='SET NULL', name='categories_parent_id_fkey'),
+        ForeignKeyConstraint(['parent_id'], ['public.categories.id'], ondelete='SET NULL', name='categories_parent_id_fkey'),
         PrimaryKeyConstraint('id', name='categories_pkey'),
         UniqueConstraint('slug', name='categories_slug_key'),
         Index('idx_categories_parent_order', 'parent_id', 'order_index'),
@@ -96,7 +112,7 @@ class User(Base):
     __table_args__ = (
         PrimaryKeyConstraint('id', name='user_pk'),
         UniqueConstraint('email', name='user_unique'),
-        Index('user_embedding_idx', 'preferences_embedding'),
+        Index('user_embedding_idx', 'preferences_embedding', postgresql_ops={'preferences_embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -131,15 +147,19 @@ class User(Base):
     evaluated_count: Mapped[Optional[int]] = mapped_column(BigInteger, server_default=text('0'))
     paypal_email: Mapped[Optional[str]] = mapped_column(String)
     paypal_payer_id: Mapped[Optional[str]] = mapped_column(String)
+    learning_goals: Mapped[Optional[str]] = mapped_column(Text)
+    daily_goal_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    preferred_learning_style: Mapped[Optional[str]] = mapped_column(String)
 
     discounts: Mapped[list['Discounts']] = relationship('Discounts', back_populates='user')
     email_verifications: Mapped[list['EmailVerifications']] = relationship('EmailVerifications', back_populates='user')
     notifications: Mapped[list['Notifications']] = relationship('Notifications', back_populates='user')
     platform_settings: Mapped[list['PlatformSettings']] = relationship('PlatformSettings', back_populates='user')
+    sessions: Mapped[list['Sessions']] = relationship('Sessions', back_populates='user')
     user_roles: Mapped[list['UserRoles']] = relationship('UserRoles', back_populates='user')
     wallets: Mapped['Wallets'] = relationship('Wallets', uselist=False, back_populates='user')
-    courses: Mapped[list['Courses']] = relationship('Courses', foreign_keys='[Courses.approved_by]', back_populates='user')
-    courses_: Mapped[list['Courses']] = relationship('Courses', foreign_keys='[Courses.instructor_id]', back_populates='instructor')
+    courses_approved_by: Mapped[list['Courses']] = relationship('Courses', foreign_keys='[Courses.approved_by]', back_populates='user')
+    courses_instructor: Mapped[list['Courses']] = relationship('Courses', foreign_keys='[Courses.instructor_id]', back_populates='instructor')
     course_enrollments: Mapped[list['CourseEnrollments']] = relationship('CourseEnrollments', back_populates='user')
     course_favourites: Mapped[list['CourseFavourites']] = relationship('CourseFavourites', back_populates='user')
     course_reviews: Mapped[list['CourseReviews']] = relationship('CourseReviews', back_populates='user')
@@ -155,9 +175,9 @@ class User(Base):
     lesson_notes: Mapped[list['LessonNotes']] = relationship('LessonNotes', back_populates='user')
     lesson_progress: Mapped[list['LessonProgress']] = relationship('LessonProgress', back_populates='user')
     lesson_tutor_memory: Mapped[list['LessonTutorMemory']] = relationship('LessonTutorMemory', back_populates='user')
-    refund_requests: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.instructor_id]', back_populates='instructor')
-    refund_requests_: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.resolved_by]', back_populates='user')
-    refund_requests1: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.user_id]', back_populates='user_')
+    refund_requests_instructor: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.instructor_id]', back_populates='instructor')
+    refund_requests_resolved_by: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.resolved_by]', back_populates='user')
+    refund_requests_user: Mapped[list['RefundRequests']] = relationship('RefundRequests', foreign_keys='[RefundRequests.user_id]', back_populates='user_')
     tutor_chat_threads: Mapped[list['TutorChatThreads']] = relationship('TutorChatThreads', back_populates='user')
     lesson_comment_reactions: Mapped[list['LessonCommentReactions']] = relationship('LessonCommentReactions', back_populates='user')
     tutor_chat_messages: Mapped[list['TutorChatMessages']] = relationship('TutorChatMessages', back_populates='user')
@@ -170,7 +190,7 @@ class Discounts(Base):
         CheckConstraint("applies_to = ANY (ARRAY['global'::text, 'course'::text, 'category'::text, 'specific'::text])", name='discounts_applies_to_check'),
         CheckConstraint("created_role = ANY (ARRAY['ADMIN'::text, 'LECTURER'::text])", name='discounts_created_role_check'),
         CheckConstraint("discount_type = ANY (ARRAY['percent'::text, 'fixed'::text])", name='discounts_discount_type_check'),
-    ForeignKeyConstraint(['created_by'], ['public.user.id'], name='discounts_created_by_fkey'),
+        ForeignKeyConstraint(['created_by'], ['public.user.id'], name='discounts_created_by_fkey'),
         PrimaryKeyConstraint('id', name='discounts_pkey'),
         {'schema': 'public'}
     )
@@ -203,7 +223,7 @@ class Discounts(Base):
 class EmailVerifications(Base):
     __tablename__ = 'email_verifications'
     __table_args__ = (
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='email_verifications_user_fk'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='email_verifications_user_fk'),
         PrimaryKeyConstraint('id', name='email_verifications_pk'),
         {'schema': 'public'}
     )
@@ -220,7 +240,7 @@ class EmailVerifications(Base):
 class Notifications(Base):
     __tablename__ = 'notifications'
     __table_args__ = (
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='notifications_user_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='notifications_user_id_fkey'),
         PrimaryKeyConstraint('id', name='notifications_pkey'),
         {'schema': 'public'}
     )
@@ -245,7 +265,7 @@ class Notifications(Base):
 class PlatformSettings(Base):
     __tablename__ = 'platform_settings'
     __table_args__ = (
-    ForeignKeyConstraint(['updated_by'], ['public.user.id'], name='platform_settings_updated_by_fkey'),
+        ForeignKeyConstraint(['updated_by'], ['public.user.id'], name='platform_settings_updated_by_fkey'),
         PrimaryKeyConstraint('id', name='platform_settings_pkey'),
         {'schema': 'public'}
     )
@@ -280,7 +300,7 @@ class PlatformWalletHistory(Base):
     __tablename__ = 'platform_wallet_history'
     __table_args__ = (
         CheckConstraint("type = ANY (ARRAY['in'::text, 'out'::text, 'hold'::text, 'release'::text, 'fee'::text])", name='platform_wallet_history_type_check'),
-    ForeignKeyConstraint(['wallet_id'], ['public.platform_wallets.id'], ondelete='CASCADE', name='platform_wallet_history_wallet_id_fkey'),
+        ForeignKeyConstraint(['wallet_id'], ['public.platform_wallets.id'], ondelete='CASCADE', name='platform_wallet_history_wallet_id_fkey'),
         PrimaryKeyConstraint('id', name='platform_wallet_history_pkey'),
         Index('idx_platform_wallet_history_created_at', 'created_at'),
         {'schema': 'public'}
@@ -297,13 +317,37 @@ class PlatformWalletHistory(Base):
     wallet: Mapped['PlatformWallets'] = relationship('PlatformWallets', back_populates='platform_wallet_history')
 
 
+class Sessions(Base):
+    __tablename__ = 'sessions'
+    __table_args__ = (
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='sessions_user_id_fkey'),
+        PrimaryKeyConstraint('id', name='sessions_pkey'),
+        Index('idx_sessions_refresh_token_hash', 'refresh_token_hash'),
+        Index('idx_sessions_user_id', 'user_id'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    refresh_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    expired_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text)
+    device_name: Mapped[Optional[str]] = mapped_column(Text)
+    ip_address: Mapped[Optional[str]] = mapped_column(Text)
+    is_revoked: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
+
+    user: Mapped['User'] = relationship('User', back_populates='sessions')
+
+
 class Topics(Base):
     __tablename__ = 'topics'
     __table_args__ = (
-    ForeignKeyConstraint(['category_id'], ['public.categories.id'], ondelete='CASCADE', name='topics_category_id_fkey'),
+        ForeignKeyConstraint(['category_id'], ['public.categories.id'], ondelete='CASCADE', name='topics_category_id_fkey'),
         PrimaryKeyConstraint('id', name='topics_pkey'),
         UniqueConstraint('slug', name='topics_slug_key'),
-        Index('topics_embedding_idx', 'embedding'),
+        Index('topics_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -325,8 +369,8 @@ class Topics(Base):
 class UserRoles(Base):
     __tablename__ = 'user_roles'
     __table_args__ = (
-    ForeignKeyConstraint(['role_id'], ['public.role.id'], name='user_roles_role_fk'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_roles_user_fk'),
+        ForeignKeyConstraint(['role_id'], ['public.role.id'], name='user_roles_role_fk'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_roles_user_fk'),
         PrimaryKeyConstraint('id', name='user_roles_pk'),
         {'schema': 'public'}
     )
@@ -344,7 +388,7 @@ class UserRoles(Base):
 class Wallets(Base):
     __tablename__ = 'wallets'
     __table_args__ = (
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='wallets_user_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='wallets_user_id_fkey'),
         PrimaryKeyConstraint('id', name='wallets_pkey'),
         UniqueConstraint('user_id', name='wallets_user_id_key'),
         {'comment': 'Ví người dùng (1 user = 1 ví)', 'schema': 'public'}
@@ -369,13 +413,13 @@ class Courses(Base):
     __tablename__ = 'courses'
     __table_args__ = (
         CheckConstraint("level = ANY (ARRAY['beginner'::text, 'intermediate'::text, 'advanced'::text, 'all'::text])", name='courses_level_check'),
-    ForeignKeyConstraint(['approved_by'], ['public.user.id'], ondelete='SET NULL', name='courses_approved_by_fkey'),
-    ForeignKeyConstraint(['category_id'], ['public.categories.id'], name='courses_categories_fk'),
-    ForeignKeyConstraint(['instructor_id'], ['public.user.id'], name='courses_user_fk'),
-    ForeignKeyConstraint(['topic_id'], ['public.topics.id'], ondelete='SET NULL', name='courses_topic_id_fkey'),
+        ForeignKeyConstraint(['approved_by'], ['public.user.id'], ondelete='SET NULL', name='courses_approved_by_fkey'),
+        ForeignKeyConstraint(['category_id'], ['public.categories.id'], name='courses_categories_fk'),
+        ForeignKeyConstraint(['instructor_id'], ['public.user.id'], name='courses_user_fk'),
+        ForeignKeyConstraint(['topic_id'], ['public.topics.id'], ondelete='SET NULL', name='courses_topic_id_fkey'),
         PrimaryKeyConstraint('id', name='courses_pkey'),
         UniqueConstraint('slug', name='courses_slug_key'),
-        Index('courses_embedding_idx', 'embedding'),
+        Index('courses_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -416,9 +460,9 @@ class Courses(Base):
     approval_status: Mapped[Optional[str]] = mapped_column(String, server_default=text("'pending'::character varying"))
     topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
-    user: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved_by], back_populates='courses')
+    user: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved_by], back_populates='courses_approved_by')
     category: Mapped[Optional['Categories']] = relationship('Categories', back_populates='courses')
-    instructor: Mapped['User'] = relationship('User', foreign_keys=[instructor_id], back_populates='courses_')
+    instructor: Mapped['User'] = relationship('User', foreign_keys=[instructor_id], back_populates='courses_instructor')
     topic: Mapped[Optional['Topics']] = relationship('Topics', back_populates='courses')
     course_enrollments: Mapped[list['CourseEnrollments']] = relationship('CourseEnrollments', back_populates='course')
     course_favourites: Mapped[list['CourseFavourites']] = relationship('CourseFavourites', back_populates='course')
@@ -439,8 +483,8 @@ class Courses(Base):
 class CourseEnrollments(Base):
     __tablename__ = 'course_enrollments'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_enrollments_course_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_enrollments_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_enrollments_course_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_enrollments_user_id_fkey'),
         PrimaryKeyConstraint('id', name='course_enrollments_pkey'),
         {'schema': 'public'}
     )
@@ -460,8 +504,8 @@ class CourseEnrollments(Base):
 class CourseFavourites(Base):
     __tablename__ = 'course_favourites'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_favourites_course_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_favourites_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_favourites_course_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_favourites_user_id_fkey'),
         PrimaryKeyConstraint('course_id', 'user_id', name='course_favourites_pk'),
         {'schema': 'public'}
     )
@@ -478,10 +522,10 @@ class CourseReviews(Base):
     __tablename__ = 'course_reviews'
     __table_args__ = (
         CheckConstraint('rating >= 1 AND rating <= 5', name='course_reviews_rating_check'),
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_reviews_course_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_reviews_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_reviews_course_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_reviews_user_id_fkey'),
         PrimaryKeyConstraint('id', name='course_reviews_pkey'),
-        Index('course_reviews_embedding_idx', 'embedding'),
+        Index('course_reviews_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -503,7 +547,7 @@ class CourseReviews(Base):
 class CourseSections(Base):
     __tablename__ = 'course_sections'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_sections_course_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_sections_course_id_fkey'),
         PrimaryKeyConstraint('id', name='course_sections_pkey'),
         {'schema': 'public'}
     )
@@ -523,8 +567,8 @@ class CourseSections(Base):
 class CourseViews(Base):
     __tablename__ = 'course_views'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_views_course_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_views_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='course_views_course_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='course_views_user_id_fkey'),
         PrimaryKeyConstraint('id', name='course_views_pkey'),
         {'schema': 'public'}
     )
@@ -542,9 +586,9 @@ class DiscountTargets(Base):
     __tablename__ = 'discount_targets'
     __table_args__ = (
         CheckConstraint('course_id IS NOT NULL OR category_id IS NOT NULL', name='discount_targets_check'),
-    ForeignKeyConstraint(['category_id'], ['public.categories.id'], ondelete='CASCADE', name='discount_targets_category_id_fkey'),
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='discount_targets_course_id_fkey'),
-    ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], ondelete='CASCADE', name='discount_targets_discount_id_fkey'),
+        ForeignKeyConstraint(['category_id'], ['public.categories.id'], ondelete='CASCADE', name='discount_targets_category_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='discount_targets_course_id_fkey'),
+        ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], ondelete='CASCADE', name='discount_targets_discount_id_fkey'),
         PrimaryKeyConstraint('id', name='discount_targets_pkey'),
         {'schema': 'public'}
     )
@@ -564,8 +608,8 @@ class Transactions(Base):
     __table_args__ = (
         CheckConstraint('amount > 0::numeric', name='transactions_amount_positive'),
         CheckConstraint('amount > 0::numeric', name='transactions_amount_check'),
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='transactions_courses_fk'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='transactions_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='transactions_courses_fk'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='transactions_user_id_fkey'),
         PrimaryKeyConstraint('id', name='transactions_pkey'),
         Index('idx_transactions_user_date', 'user_id', 'created_at'),
         {'comment': 'Lịch sử giao dịch (mua khóa học, rút ví, thanh toán...)',
@@ -602,10 +646,10 @@ class Transactions(Base):
 class UserEmbeddingHistory(Base):
     __tablename__ = 'user_embedding_history'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='user_embedding_history_course_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_embedding_history_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='user_embedding_history_course_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='user_embedding_history_user_id_fkey'),
         PrimaryKeyConstraint('id', name='user_embedding_history_pkey'),
-        Index('user_embedding_history_idx', 'embedding'),
+        Index('user_embedding_history_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -627,8 +671,8 @@ class InstructorEarnings(Base):
     __tablename__ = 'instructor_earnings'
     __table_args__ = (
         CheckConstraint("status::text = ANY (ARRAY['holding'::character varying::text, 'pending'::character varying::text, 'paid'::character varying::text, 'refunded'::character varying::text])", name='instructor_earnings_status_check'),
-    ForeignKeyConstraint(['instructor_id'], ['public.user.id'], ondelete='CASCADE', name='instructor_earnings_instructor_id_fkey'),
-    ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='CASCADE', name='instructor_earnings_transaction_id_fkey'),
+        ForeignKeyConstraint(['instructor_id'], ['public.user.id'], ondelete='CASCADE', name='instructor_earnings_instructor_id_fkey'),
+        ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='CASCADE', name='instructor_earnings_transaction_id_fkey'),
         PrimaryKeyConstraint('id', name='instructor_earnings_pkey'),
         {'schema': 'public'}
     )
@@ -653,16 +697,16 @@ class InstructorEarnings(Base):
 class Lessons(Base):
     __tablename__ = 'lessons'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='lessons_courses_fk'),
-    ForeignKeyConstraint(['section_id'], ['public.course_sections.id'], ondelete='CASCADE', name='lessons_section_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='lessons_courses_fk'),
+        ForeignKeyConstraint(['section_id'], ['public.course_sections.id'], ondelete='CASCADE', name='lessons_section_id_fkey'),
         PrimaryKeyConstraint('id', name='lessons_pkey'),
-        Index('lessons_embedding_idx', 'embedding'),
+        Index('lessons_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('uuid_generate_v4()'))
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    lesson_type: Mapped[str] = mapped_column(Enum('video', 'article', 'quiz', 'code', 'assignment', 'resource', name='lesson_type_enum'), nullable=False)
+    lesson_type: Mapped[LessonTypeEnum] = mapped_column(Enum(LessonTypeEnum, values_callable=lambda cls: [member.value for member in cls], name='lesson_type_enum'), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     section_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -688,19 +732,16 @@ class Lessons(Base):
     lesson_tutor_memory: Mapped[list['LessonTutorMemory']] = relationship('LessonTutorMemory', back_populates='lesson')
     tutor_chat_threads: Mapped[list['TutorChatThreads']] = relationship('TutorChatThreads', back_populates='lesson')
     resource_chunks: Mapped[list['ResourceChunks']] = relationship('ResourceChunks', back_populates='lesson')
-    # 🧩 Auto relationship (parent → child): LessonVideos
-    lesson_videos: Mapped[Optional['LessonVideos']] = relationship(
-        'LessonVideos', back_populates='lessons', uselist=False)
 
 
 class PurchaseItems(Base):
     __tablename__ = 'purchase_items'
     __table_args__ = (
         CheckConstraint("status = ANY (ARRAY['completed'::text, 'refunded'::text, 'cancelled'::text])", name='purchase_items_status_check'),
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='purchase_items_course_id_fkey'),
-    ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], name='purchase_items_discount_id_fkey'),
-    ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='CASCADE', name='purchase_items_transaction_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='purchase_items_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], name='purchase_items_course_id_fkey'),
+        ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], name='purchase_items_discount_id_fkey'),
+        ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], ondelete='CASCADE', name='purchase_items_transaction_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='purchase_items_user_id_fkey'),
         PrimaryKeyConstraint('id', name='purchase_items_pkey'),
         {'schema': 'public'}
     )
@@ -730,8 +771,8 @@ class WithdrawalRequests(Base):
     __table_args__ = (
         CheckConstraint('amount > 0::numeric', name='withdrawal_requests_amount_check'),
         CheckConstraint("status::text = ANY (ARRAY['pending'::character varying::text, 'approved'::character varying::text, 'rejected'::character varying::text, 'payout_pending'::character varying::text, 'paid'::character varying::text, 'failed'::character varying::text, 'processing'::character varying::text])", name='withdrawal_requests_status_check'),
-    ForeignKeyConstraint(['lecturer_id'], ['public.user.id'], name='withdrawal_requests_lecturer_id_fkey'),
-    ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], name='withdrawal_requests_transactions_fk'),
+        ForeignKeyConstraint(['lecturer_id'], ['public.user.id'], name='withdrawal_requests_lecturer_id_fkey'),
+        ForeignKeyConstraint(['transaction_id'], ['public.transactions.id'], name='withdrawal_requests_transactions_fk'),
         PrimaryKeyConstraint('id', name='withdrawal_requests_pkey'),
         {'schema': 'public'}
     )
@@ -756,9 +797,9 @@ class WithdrawalRequests(Base):
 class DiscountHistory(Base):
     __tablename__ = 'discount_history'
     __table_args__ = (
-    ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], name='discount_history_discount_id_fkey'),
-    ForeignKeyConstraint(['purchase_item_id'], ['public.purchase_items.id'], ondelete='CASCADE', name='discount_history_purchase_items_fk'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='discount_history_user_id_fkey'),
+        ForeignKeyConstraint(['discount_id'], ['public.discounts.id'], name='discount_history_discount_id_fkey'),
+        ForeignKeyConstraint(['purchase_item_id'], ['public.purchase_items.id'], ondelete='CASCADE', name='discount_history_purchase_items_fk'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='discount_history_user_id_fkey'),
         PrimaryKeyConstraint('id', name='discount_history_pkey'),
         {'schema': 'public'}
     )
@@ -778,9 +819,9 @@ class DiscountHistory(Base):
 class LessonActive(Base):
     __tablename__ = 'lesson_active'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='lesson_active_course_fk'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_active_lesson_fk'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_active_user_fk'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='lesson_active_course_fk'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_active_lesson_fk'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_active_user_fk'),
         PrimaryKeyConstraint('user_id', 'course_id', name='lesson_active_pk'),
         {'schema': 'public'}
     )
@@ -798,9 +839,9 @@ class LessonActive(Base):
 class LessonChunks(Base):
     __tablename__ = 'lesson_chunks'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_chunks_lesson_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_chunks_lesson_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_chunks_pkey'),
-        Index('lesson_chunks_embedding_idx', 'embedding'),
+        Index('lesson_chunks_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -819,8 +860,8 @@ class LessonCodes(Base):
     __tablename__ = 'lesson_codes'
     __table_args__ = (
         CheckConstraint("difficulty = ANY (ARRAY['easy'::text, 'medium'::text, 'hard'::text])", name='lesson_codes_difficulty_check'),
-    ForeignKeyConstraint(['language_id'], ['public.supported_languages.id'], name='lesson_codes_language_id_fkey'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_codes_lesson_id_fkey'),
+        ForeignKeyConstraint(['language_id'], ['public.supported_languages.id'], name='lesson_codes_language_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_codes_lesson_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_codes_pkey'),
         {'schema': 'public'}
     )
@@ -848,9 +889,9 @@ class LessonComments(Base):
     __table_args__ = (
         CheckConstraint('depth >= 0', name='lesson_comments_depth_check'),
         CheckConstraint("status::text = ANY (ARRAY['visible'::character varying::text, 'hidden'::character varying::text, 'deleted'::character varying::text])", name='lesson_comments_status_check'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_comments_lesson_id_fkey'),
-    ForeignKeyConstraint(['parent_id'], ['public.lesson_comments.id'], ondelete='CASCADE', name='lesson_comments_parent_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_comments_user_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_comments_lesson_id_fkey'),
+        ForeignKeyConstraint(['parent_id'], ['public.lesson_comments.id'], ondelete='CASCADE', name='lesson_comments_parent_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_comments_user_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_comments_pkey'),
         Index('idx_lc_lesson_created', 'lesson_id', 'created_at'),
         Index('idx_lc_parent', 'parent_id'),
@@ -882,12 +923,12 @@ class LessonNotes(Base):
     __tablename__ = 'lesson_notes'
     __table_args__ = (
         CheckConstraint('time_seconds >= 0', name='lesson_notes_time_seconds_check'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_notes_lesson_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_notes_user_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_notes_lesson_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_notes_user_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_notes_pkey'),
         Index('idx_lesson_notes_lesson_time', 'lesson_id', 'time_seconds'),
         Index('idx_lesson_notes_user', 'user_id'),
-        Index('lesson_notes_embedding_idx', 'embedding'),
+        Index('lesson_notes_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='ivfflat', postgresql_with={'lists': '100'}),
         {'schema': 'public'}
     )
 
@@ -906,9 +947,9 @@ class LessonNotes(Base):
 class LessonProgress(Base):
     __tablename__ = 'lesson_progress'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='lesson_progress_course_id_fkey'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_progress_lesson_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_progress_user_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='lesson_progress_course_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_progress_lesson_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_progress_user_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_progress_pkey'),
         UniqueConstraint('user_id', 'lesson_id', name='lesson_progress_unique'),
         Index('idx_lesson_progress_user_course', 'user_id', 'course_id'),
@@ -932,11 +973,11 @@ class LessonProgress(Base):
 class LessonQuizzes(Base):
     __tablename__ = 'lesson_quizzes'
     __table_args__ = (
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='lesson_quizzes_course_id_fkey'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_quizzes_lesson_id_fkey'),
-    ForeignKeyConstraint(['section_id'], ['public.course_sections.id'], ondelete='CASCADE', name='lesson_quizzes_section_id_fkey'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='lesson_quizzes_course_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_quizzes_lesson_id_fkey'),
+        ForeignKeyConstraint(['section_id'], ['public.course_sections.id'], ondelete='CASCADE', name='lesson_quizzes_section_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_quizzes_pkey'),
-        Index('lesson_quizzes_embedding_idx', 'embedding'),
+        Index('lesson_quizzes_embedding_idx', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -960,7 +1001,7 @@ class LessonQuizzes(Base):
 class LessonResources(Base):
     __tablename__ = 'lesson_resources'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_resources_lesson_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_resources_lesson_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_resources_pkey'),
         {'schema': 'public'}
     )
@@ -983,8 +1024,8 @@ class LessonResources(Base):
 class LessonTutorMemory(Base):
     __tablename__ = 'lesson_tutor_memory'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='fk_ltm_lesson'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_ltm_user'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='fk_ltm_lesson'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_ltm_user'),
         PrimaryKeyConstraint('user_id', 'lesson_id', name='lesson_tutor_memory_pkey'),
         Index('idx_ltm_lesson', 'lesson_id'),
         Index('idx_ltm_user', 'user_id'),
@@ -1004,10 +1045,10 @@ class LessonTutorMemory(Base):
     user: Mapped['User'] = relationship('User', back_populates='lesson_tutor_memory')
 
 
-class LessonVideos(Base):
+class LessonVideos(Lessons):
     __tablename__ = 'lesson_videos'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_videos_lessons_fk'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='lesson_videos_lessons_fk'),
         PrimaryKeyConstraint('lesson_id', name='lesson_videos_pkey'),
         {'schema': 'public'}
     )
@@ -1018,19 +1059,16 @@ class LessonVideos(Base):
     duration: Mapped[Optional[float]] = mapped_column(Double(53), server_default=text('0'))
     file_id: Mapped[Optional[str]] = mapped_column(String)
     source_type: Mapped[Optional[str]] = mapped_column(String, server_default=text("'upload_drive'::character varying"))
-    # 🧩 Auto relationship (child → parent): Lessons
-    lessons: Mapped['Lessons'] = relationship(
-        'Lessons', back_populates='lesson_videos', uselist=False)
 
 
 class RefundRequests(Base):
     __tablename__ = 'refund_requests'
     __table_args__ = (
         CheckConstraint("status::text = ANY (ARRAY['requested'::character varying::text, 'instructor_approved'::character varying::text, 'instructor_rejected'::character varying::text, 'admin_approved'::character varying::text, 'admin_rejected'::character varying::text, 'refunded'::character varying::text])", name='refund_requests_status_check'),
-    ForeignKeyConstraint(['instructor_id'], ['public.user.id'], name='refund_requests_instructor_id_fkey'),
-    ForeignKeyConstraint(['purchase_item_id'], ['public.purchase_items.id'], ondelete='CASCADE', name='refund_requests_purchase_item_id_fkey'),
-    ForeignKeyConstraint(['resolved_by'], ['public.user.id'], name='refund_requests_resolved_by_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], name='refund_requests_user_id_fkey'),
+        ForeignKeyConstraint(['instructor_id'], ['public.user.id'], name='refund_requests_instructor_id_fkey'),
+        ForeignKeyConstraint(['purchase_item_id'], ['public.purchase_items.id'], ondelete='CASCADE', name='refund_requests_purchase_item_id_fkey'),
+        ForeignKeyConstraint(['resolved_by'], ['public.user.id'], name='refund_requests_resolved_by_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='refund_requests_user_id_fkey'),
         PrimaryKeyConstraint('id', name='refund_requests_pkey'),
         Index('idx_refund_requests_instructor', 'instructor_id'),
         Index('idx_refund_requests_purchase_item', 'purchase_item_id'),
@@ -1054,21 +1092,21 @@ class RefundRequests(Base):
     admin_reviewed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
     resolved_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
 
-    instructor: Mapped['User'] = relationship('User', foreign_keys=[instructor_id], back_populates='refund_requests')
+    instructor: Mapped['User'] = relationship('User', foreign_keys=[instructor_id], back_populates='refund_requests_instructor')
     purchase_item: Mapped['PurchaseItems'] = relationship('PurchaseItems', back_populates='refund_requests')
-    user: Mapped[Optional['User']] = relationship('User', foreign_keys=[resolved_by], back_populates='refund_requests_')
-    user_: Mapped['User'] = relationship('User', foreign_keys=[user_id], back_populates='refund_requests1')
+    user: Mapped[Optional['User']] = relationship('User', foreign_keys=[resolved_by], back_populates='refund_requests_resolved_by')
+    user_: Mapped['User'] = relationship('User', foreign_keys=[user_id], back_populates='refund_requests_user')
 
 
 class TutorChatThreads(Base):
     __tablename__ = 'tutor_chat_threads'
     __table_args__ = (
         CheckConstraint("scope = ANY (ARRAY['lesson'::text, 'section'::text, 'course'::text])", name='ck_tutor_threads_scope'),
-    ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='fk_tutor_threads_course'),
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='fk_tutor_threads_lesson'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_tutor_threads_user'),
+        ForeignKeyConstraint(['course_id'], ['public.courses.id'], ondelete='CASCADE', name='fk_tutor_threads_course'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='fk_tutor_threads_lesson'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_tutor_threads_user'),
         PrimaryKeyConstraint('id', name='tutor_chat_threads_pkey'),
-        Index('idx_tutor_threads_active', 'user_id', 'lesson_id', 'scope'),
+        Index('idx_tutor_threads_active', 'user_id', 'lesson_id', 'scope', postgresql_where='(is_active = true)'),
         Index('idx_tutor_threads_course', 'course_id', 'created_at'),
         Index('idx_tutor_threads_user_lesson_scope', 'user_id', 'lesson_id', 'scope', 'created_at'),
         {'schema': 'public'}
@@ -1094,7 +1132,7 @@ class TutorChatThreads(Base):
 class LessonCodeFiles(Base):
     __tablename__ = 'lesson_code_files'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_code_id'], ['public.lesson_codes.id'], ondelete='CASCADE', name='lesson_code_files_lesson_code_id_fkey'),
+        ForeignKeyConstraint(['lesson_code_id'], ['public.lesson_codes.id'], ondelete='CASCADE', name='lesson_code_files_lesson_code_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_code_files_pkey'),
         UniqueConstraint('lesson_code_id', 'user_id', 'filename', 'role', name='lesson_code_files_lesson_code_id_user_id_filename_role_key'),
         {'schema': 'public'}
@@ -1104,7 +1142,7 @@ class LessonCodeFiles(Base):
     lesson_code_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    role: Mapped[str] = mapped_column(Enum('solution', 'starter', 'user', name='code_file_role'), nullable=False, server_default=text("'solution'::code_file_role"), comment='Phân loại file: \n- solution = code chuẩn của giảng viên để verify\n- starter = code khung cho học viên ban đầu\n- user = code học viên đang sửa')
+    role: Mapped[CodeFileRole] = mapped_column(Enum(CodeFileRole, values_callable=lambda cls: [member.value for member in cls], name='code_file_role'), nullable=False, server_default=text("'solution'::code_file_role"), comment='Phân loại file: \n- solution = code chuẩn của giảng viên để verify\n- starter = code khung cho học viên ban đầu\n- user = code học viên đang sửa')
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     is_main: Mapped[Optional[bool]] = mapped_column(Boolean, server_default=text('false'))
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), server_default=text('now()'))
@@ -1117,7 +1155,7 @@ class LessonCodeFiles(Base):
 class LessonCodeTestcases(Base):
     __tablename__ = 'lesson_code_testcases'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_code_id'], ['public.lesson_codes.id'], ondelete='CASCADE', name='lesson_code_testcases_lesson_code_id_fkey'),
+        ForeignKeyConstraint(['lesson_code_id'], ['public.lesson_codes.id'], ondelete='CASCADE', name='lesson_code_testcases_lesson_code_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_code_testcases_pkey'),
         {'schema': 'public'}
     )
@@ -1136,8 +1174,8 @@ class LessonCodeTestcases(Base):
 class LessonCommentReactions(Base):
     __tablename__ = 'lesson_comment_reactions'
     __table_args__ = (
-    ForeignKeyConstraint(['comment_id'], ['public.lesson_comments.id'], ondelete='CASCADE', name='lesson_comment_reactions_comment_id_fkey'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_comment_reactions_user_id_fkey'),
+        ForeignKeyConstraint(['comment_id'], ['public.lesson_comments.id'], ondelete='CASCADE', name='lesson_comment_reactions_comment_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='lesson_comment_reactions_user_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_comment_reactions_pkey'),
         UniqueConstraint('comment_id', 'user_id', name='lesson_comment_reactions_comment_id_user_id_key'),
         Index('idx_lcr_comment', 'comment_id'),
@@ -1157,7 +1195,7 @@ class LessonCommentReactions(Base):
 class LessonQuizOptions(Base):
     __tablename__ = 'lesson_quiz_options'
     __table_args__ = (
-    ForeignKeyConstraint(['quiz_id'], ['public.lesson_quizzes.id'], ondelete='CASCADE', name='lesson_quiz_options_quiz_id_fkey'),
+        ForeignKeyConstraint(['quiz_id'], ['public.lesson_quizzes.id'], ondelete='CASCADE', name='lesson_quiz_options_quiz_id_fkey'),
         PrimaryKeyConstraint('id', name='lesson_quiz_options_pkey'),
         {'schema': 'public'}
     )
@@ -1176,10 +1214,10 @@ class LessonQuizOptions(Base):
 class ResourceChunks(Base):
     __tablename__ = 'resource_chunks'
     __table_args__ = (
-    ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='resource_chunks_lesson_id_fkey'),
-    ForeignKeyConstraint(['resource_id'], ['public.lesson_resources.id'], ondelete='CASCADE', name='resource_chunks_resource_id_fkey'),
+        ForeignKeyConstraint(['lesson_id'], ['public.lessons.id'], ondelete='CASCADE', name='resource_chunks_lesson_id_fkey'),
+        ForeignKeyConstraint(['resource_id'], ['public.lesson_resources.id'], ondelete='CASCADE', name='resource_chunks_resource_id_fkey'),
         PrimaryKeyConstraint('id', name='resource_chunks_pkey'),
-        Index('idx_resource_chunks_embedding_hnsw', 'embedding'),
+        Index('idx_resource_chunks_embedding_hnsw', 'embedding', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_using='hnsw'),
         {'schema': 'public'}
     )
 
@@ -1202,8 +1240,8 @@ class TutorChatMessages(Base):
     __tablename__ = 'tutor_chat_messages'
     __table_args__ = (
         CheckConstraint("role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text])", name='ck_tutor_messages_role'),
-    ForeignKeyConstraint(['thread_id'], ['public.tutor_chat_threads.id'], ondelete='CASCADE', name='fk_tutor_messages_thread'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_tutor_messages_user'),
+        ForeignKeyConstraint(['thread_id'], ['public.tutor_chat_threads.id'], ondelete='CASCADE', name='fk_tutor_messages_thread'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_tutor_messages_user'),
         PrimaryKeyConstraint('id', name='tutor_chat_messages_pkey'),
         Index('idx_tutor_messages_thread_created', 'thread_id', 'created_at'),
         Index('idx_tutor_messages_user_created', 'user_id', 'created_at'),
@@ -1227,8 +1265,8 @@ class TutorChatImages(Base):
     __tablename__ = 'tutor_chat_images'
     __table_args__ = (
         CheckConstraint('file_size >= 0', name='ck_tutor_images_size'),
-    ForeignKeyConstraint(['message_id'], ['public.tutor_chat_messages.id'], ondelete='CASCADE', name='fk_tutor_images_message'),
-    ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_tutor_images_user'),
+        ForeignKeyConstraint(['message_id'], ['public.tutor_chat_messages.id'], ondelete='CASCADE', name='fk_tutor_images_message'),
+        ForeignKeyConstraint(['user_id'], ['public.user.id'], ondelete='CASCADE', name='fk_tutor_images_user'),
         PrimaryKeyConstraint('id', name='tutor_chat_images_pkey'),
         Index('idx_tutor_images_message', 'message_id'),
         Index('idx_tutor_images_user_created', 'user_id', 'created_at'),
@@ -1246,10 +1284,3 @@ class TutorChatImages(Base):
 
     message: Mapped['TutorChatMessages'] = relationship('TutorChatMessages', back_populates='tutor_chat_images')
     user: Mapped['User'] = relationship('User', back_populates='tutor_chat_images')
-
-
-# === AUTO FIX SUMMARY ===
-# • Đã đổi class kế thừa (trừ Base) → Base.
-# • Đã thêm relationship() 1–1 hai chiều tự động (không trùng lặp).
-# • Field dùng snake_case (vd: lesson_videos, course_reviews, ...).
-# =========================

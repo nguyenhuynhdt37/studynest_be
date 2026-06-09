@@ -24,6 +24,7 @@ class UserOut(BaseModel):
 class LoginUser(BaseModel):
     email: EmailStr
     password: str
+    device_type: str | None = None
 
 
 class RefreshEmail(BaseModel):
@@ -56,3 +57,17 @@ class BlockUser(BaseModel):
 
 class GoogleLogin(BaseModel):
     credential: str
+    device_type: str | None = None
+
+
+class SendOtp(BaseModel):
+    email: EmailStr
+    purpose: str
+
+
+class VerifyOtp(BaseModel):
+    email: EmailStr | None = None
+    phone: str | None = None
+    otp_code: str
+    purpose: str
+    device_type: str | None = None

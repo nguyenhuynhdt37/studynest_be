@@ -18,12 +18,13 @@ class MailerService:
             MAIL_USERNAME=settings.MAIL_USERNAME,
             MAIL_PASSWORD=SecretStr(settings.MAIL_PASSWORD),
             MAIL_FROM=settings.MAIL_FROM,
+            MAIL_FROM_NAME="StudyNest",
             MAIL_PORT=settings.MAIL_PORT,
             MAIL_SERVER=settings.MAIL_SERVER,
-            MAIL_STARTTLS=settings.MAIL_TLS,
-            MAIL_SSL_TLS=settings.MAIL_SSL,
+            MAIL_STARTTLS=True,
+            MAIL_SSL_TLS=False,
             USE_CREDENTIALS=True,
-            VALIDATE_CERTS=True,
+            VALIDATE_CERTS=False,
             TEMPLATE_FOLDER=template_dir,
         )
         self.fastmail = FastMail(self.conf)
@@ -31,13 +32,24 @@ class MailerService:
     async def send_verification_email(self, email: str, fullname: str, code: str):
         """Gửi email xác thực tài khoản."""
         message = MessageSchema(
-            subject="Xác thực email - Huỳnh E-learning",
+            subject="Xác thực email - StudyNest",
             recipients=[email],
             template_body={"fullname": fullname, "code": code},
             subtype=MessageType.html,
         )
         await self.fastmail.send_message(message, template_name="verify_email.html")
         return {"message": f"Đã gửi email xác thực đến {email}"}
+
+    async def send_login_otp_email(self, email: str, fullname: str, code: str):
+        """Gửi email OTP đăng nhập."""
+        message = MessageSchema(
+            subject="Mã OTP đăng nhập - StudyNest",
+            recipients=[email],
+            template_body={"fullname": fullname, "code": code},
+            subtype=MessageType.html,
+        )
+        await self.fastmail.send_message(message, template_name="login_otp.html")
+        return {"message": f"Đã gửi mã OTP đăng nhập đến {email}"}
 
     async def send_reset_password_email(
         self, email: str, fullname: str, reset_link: str

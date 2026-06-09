@@ -48,11 +48,13 @@ from app.api.v1.user import refunds as user_refunds
 from app.api.v1.user import transaction as user_transaction
 from app.api.v1.user import tutor_chat as user_tutor_chat
 from app.core.scheduler import scheduler, start_scheduler
+from app.core.redis import close_redis, ping_redis
 
 # --- MIDDLEWARE ---
 from app.middleware.request_context import RequestContextMiddleware
 
 # --- USER ROUTES ---
+
 
 
 @asynccontextmanager
@@ -70,6 +72,9 @@ async def lifespan(app: FastAPI):
     # ================================
     start_scheduler(http)
     print("⏱ Scheduler started")
+
+    redis_ready = await ping_redis()
+    print("🧠 Redis presence ready" if redis_ready else "⚠ Redis presence unavailable")
 
     # App chạy
     try:
@@ -89,6 +94,9 @@ async def lifespan(app: FastAPI):
             print("🛑 Scheduler stopped")
         except Exception as e:
             print("⚠ Scheduler shutdown error:", e)
+
+        await close_redis()
+        print("🧠 Redis client closed")
 
 
 # ===== APP CONFIG =====
@@ -176,6 +184,10 @@ app.include_router(chat_topic_admin.router, prefix=prefix)
 app.include_router(chat_course_lecturer.router, prefix=prefix)
 app.include_router(chat_lesson_lecturer.router, prefix=prefix)
 app.include_router(chat_profile_user.router, prefix=prefix)
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 # ===== ROOT =====

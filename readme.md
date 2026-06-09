@@ -1,1 +1,1 @@
-python -m sqlacodegen postgresql+psycopg://admin:Admin1234@127.0.0.1:5432/study_nest --schema public --outfile app/db/models/database.py
+python -m sqlacodegen 'postgresql://admin:StrongPass2026!@127.0.0.1:5433/studynest' --schema public --outfile app/db/models/database.py

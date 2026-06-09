@@ -164,7 +164,12 @@ class CourseFavoriteService:
                 Courses.level,
                 Courses.language,
                 Courses.created_at,
+                Courses.base_price,
+                Courses.currency,
+                Courses.views,
                 Categories.name.label("category_name"),
+                User.fullname.label("instructor_name"),
+                User.avatar.label("instructor_avatar"),
                 func.count(CourseReviews.id).label("review_count"),
                 func.coalesce(func.avg(CourseReviews.rating), 0).label("avg_rating"),
                 CourseFavourites.created_at.label("favourited_at"),
@@ -172,8 +177,9 @@ class CourseFavoriteService:
             .join(CourseFavourites, CourseFavourites.course_id == Courses.id)
             .outerjoin(Categories, Categories.id == Courses.category_id)
             .outerjoin(CourseReviews, CourseReviews.course_id == Courses.id)
+            .outerjoin(User, User.id == Courses.instructor_id)
             .where(CourseFavourites.user_id == user_id)
-            .group_by(Courses.id, Categories.name, CourseFavourites.created_at)
+            .group_by(Courses.id, Categories.name, CourseFavourites.created_at, User.fullname, User.avatar)
         )
 
         # 🔍 Lọc theo từ khóa

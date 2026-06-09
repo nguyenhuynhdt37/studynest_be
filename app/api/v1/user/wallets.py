@@ -14,9 +14,8 @@ async def get_wallet(
     authorization_service: AuthorizationService = Depends(AuthorizationService),
 ):
     user: User = await authorization_service.get_current_user()
-    wallet = await payment_svc.get_by_user_id(user.id)
-    if not wallet:
-        raise HTTPException(404, "Không tìm thấy ví người dùng.")
+    wallet = await payment_svc.get_or_create_wallet_async(user.id)
+    await payment_svc.db.commit() # Commit việc tạo ví mới nếu có
     return wallet
 
 
@@ -38,15 +37,13 @@ async def create_wallet_payment(
 async def paypal_wallet_callback(
     request: Request,
     payment_svc: WalletsService = Depends(WalletsService),
-    authorization_service: AuthorizationService = Depends(AuthorizationService),
 ):
-    user: User = await authorization_service.get_current_user()
     token = request.query_params.get("token")
     if token is None:
         raise HTTPException(404, "khôn tìm thấy order_id")
     payer_id = request.query_params.get("PayerID")
     result = await payment_svc.paypal_callback_async(
-        http=request.app.state.http, token=token, payer_id=payer_id, user=user
+        http=request.app.state.http, token=token, payer_id=payer_id
     )
     return result
 
@@ -55,9 +52,7 @@ async def paypal_wallet_callback(
 async def paypal_wallet_cancel(
     request: Request,
     payment_svc: WalletsService = Depends(WalletsService),
-    authorization_service: AuthorizationService = Depends(AuthorizationService),
 ):
-    await authorization_service.get_current_user()
     token = request.query_params.get("token")
     if token is None:
         raise HTTPException(404, "khôn tìm thấy order_id")

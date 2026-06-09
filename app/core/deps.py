@@ -10,9 +10,10 @@ from sqlalchemy.orm import selectinload
 
 from app.core.context import get_request
 from app.core.security import SecurityService
-from app.db.models.database import User, UserRoles
+from app.db.models.database import Sessions, User, UserRoles
 from app.db.sesson import AsyncSessionLocal, get_session
 from app.libs.formats.datetime import now as get_now
+from app.libs.formats.datetime import strip_tz
 from app.libs.formats.datetime import to_utc_naive
 
 
@@ -30,9 +31,17 @@ class AuthorizationService:
     # ==============================
 
     async def get_current_user(self) -> User:
-        """Lấy user hiện tại từ cookie access_token."""
-        request = get_request()  # ✅ Lấy đúng thời điểm đang có request
-        token = request.cookies.get("access_token")
+        """Lấy user hiện tại từ Authorization header (mobile) hoặc cookie (web)."""
+        request = get_request()
+
+        # Ưu tiên 1: Authorization: Bearer <token> (dùng cho mobile app)
+        auth_header = request.headers.get("authorization")
+        token: str | None = None
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        else:
+            # Fallback 2: Cookie access_token (dùng cho web/browser)
+            token = request.cookies.get("access_token")
 
         if not token:
             raise HTTPException(status_code=401, detail="Token not found in cookies")
@@ -40,8 +49,19 @@ class AuthorizationService:
         try:
             dict_token = await self.security.decode_access_token(token)
             user_id = dict_token.get("sub")
-            if not user_id:
+            sid = dict_token.get("sid")
+            if not user_id or not sid:
                 raise HTTPException(status_code=401, detail="Invalid token")
+
+            session = await self.db.scalar(
+                select(Sessions).where(
+                    Sessions.id == sid,
+                    Sessions.user_id == user_id,
+                    Sessions.is_revoked.is_(False),
+                )
+            )
+            if not session or strip_tz(session.expired_at) < get_now():
+                raise HTTPException(status_code=401, detail="Session revoked or expired")
 
             stmt = (
                 select(User)
@@ -53,6 +73,7 @@ class AuthorizationService:
                 raise HTTPException(status_code=401, detail="Invalid token")
 
             user.last_login_at = await to_utc_naive(get_now())
+            session.updated_at = get_now()
             await self.db.commit()
             await self.db.refresh(user)
             return user
@@ -60,17 +81,58 @@ class AuthorizationService:
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid token")
 
+    async def get_current_sid(self) -> str:
+        request = get_request()
+        auth_header = request.headers.get("authorization")
+        token: str | None = None
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        else:
+            token = request.cookies.get("access_token")
+
+        if not token:
+            raise HTTPException(status_code=401, detail="Token not found")
+
+        try:
+            payload = await self.security.decode_access_token(token)
+            sid = payload.get("sid")
+            if not sid:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            return str(sid)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
     async def get_current_user_if_any(self) -> Optional[User]:
-        """Lấy user nếu có (nếu chưa login thì trả None)."""
+        """Lấy user nếu có (ưu tiên Authorization header, fallback cookies)."""
         try:
             request = get_request()
-            token = request.cookies.get("access_token")
+
+            # Ưu tiên 1: Authorization: Bearer <token> (mobile app)
+            auth_header = request.headers.get("authorization")
+            token: str | None = None
+            if auth_header and auth_header.lower().startswith("bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+            else:
+                # Fallback 2: Cookie access_token (web/browser)
+                token = request.cookies.get("access_token")
+
             if not token:
                 return None
 
             dict_token = await self.security.decode_access_token(token)
             user_id = dict_token.get("sub")
-            if not user_id:
+            sid = dict_token.get("sid")
+            if not user_id or not sid:
+                return None
+
+            session = await self.db.scalar(
+                select(Sessions).where(
+                    Sessions.id == sid,
+                    Sessions.user_id == user_id,
+                    Sessions.is_revoked.is_(False),
+                )
+            )
+            if not session or strip_tz(session.expired_at) < get_now():
                 return None
 
             stmt = (
@@ -83,6 +145,7 @@ class AuthorizationService:
                 return None
 
             user.last_login_at = await to_utc_naive(get_now())
+            session.updated_at = get_now()
             await self.db.commit()
             await self.db.refresh(user)
             return user
@@ -149,13 +212,26 @@ class AuthorizationService:
                 payload = await security.decode_access_token(token)
 
             user_id = payload.get("sub")
-            if not user_id:
+            sid = payload.get("sid")
+            if not user_id or not sid:
                 await websocket.send_json({"error": "Token không hợp lệ"})
                 await websocket.close(code=1008)
                 return None
 
             # ✅ Query user
             async with AsyncSessionLocal() as db:
+                session = await db.scalar(
+                    select(Sessions).where(
+                        Sessions.id == sid,
+                        Sessions.user_id == user_id,
+                        Sessions.is_revoked.is_(False),
+                    )
+                )
+                if not session or strip_tz(session.expired_at) < get_now():
+                    await websocket.send_json({"error": "Phiên đăng nhập đã hết hạn"})
+                    await websocket.close(code=1008)
+                    return None
+
                 stmt = (
                     select(User)
                     .where(User.id == user_id)

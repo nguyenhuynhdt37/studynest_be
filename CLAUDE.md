@@ -621,19 +621,28 @@ scheduler.add_job(
 **File**: `docker-compose.yaml`
 
 ```yaml
-# Chỉ có Piston API — code execution sandbox
+# Chỉ có PostgreSQL (với pgvector)
 services:
-  piston_api:
-    image: nguyenhuynh04/piston-api:v1.0.0-arm64
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: studynest_db
     ports:
-      - "4000:4000"
+      - "5433:5432"
 ```
 
-> PostgreSQL và các service khác **không chạy qua Docker** — cài local hoặc cloud.
+> PostgreSQL chạy qua Docker trên port **5433**. Các service khác (như Piston) hiện không được cấu hình trong compose này.
 
 ---
 
 ## 🚀 Chạy Dự Án
+
+### Backend Commands (studynest_be)
+- Install dependencies: `pip install -r requirements.txt`
+- Run dev server: `uvicorn app.main:app --reload`
+- Generate models from DB: `./gen_models.sh` (hoặc `python -m sqlacodegen 'postgresql://admin:StrongPass2026!@127.0.0.1:5433/studynest' --schema public --outfile app/db/models/database.py`)
+- Database migrations (Alembic):
+  - Create migration: `alembic revision --autogenerate -m "description"`
+  - Apply migrations: `alembic upgrade head`
 
 ```bash
 # 1. Tạo và kích hoạt virtual env

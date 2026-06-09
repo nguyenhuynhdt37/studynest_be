@@ -100,13 +100,16 @@ class ProfileService:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Lỗi khi cập nhật hồ sơ: {e}")
 
-        return {
-            "id": str(user.id),
-            "fullname": user.fullname,
-            "bio": user.bio,
-            "facebook_url": user.facebook_url,
-            "birthday": user.birthday,
-            "conscious": user.conscious,
-            "district": user.district,
-            "citizenship_identity": user.citizenship_identity,
-        }
+            return {
+                "id": str(user.id),
+                "fullname": user.fullname,
+                "bio": user.bio,
+                "facebook_url": user.facebook_url,
+                "birthday": user.birthday,
+                "conscious": user.conscious,
+                "district": user.district,
+                "citizenship_identity": user.citizenship_identity,
+                "learning_goals": user.learning_goals,
+                "daily_goal_minutes": user.daily_goal_minutes,
+                "preferred_learning_style": user.preferred_learning_style,
+            }
